@@ -75,6 +75,16 @@ def metadata(account: str, slug: str, datasets: tuple[str, ...]) -> dict:
     }
 
 
+def kaggle_command() -> list[str]:
+    """Return a working Kaggle CLI prefix, including environments without an exe."""
+    executable = shutil.which("kaggle")
+    if executable:
+        return [executable]
+    # The current kaggle package exposes kaggle.cli but has no __main__.py, so
+    # ``python -m kaggle`` fails even though the API package is installed.
+    return [sys.executable, "-c", "from kaggle.cli import main; main()"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--commit", required=True, help="immutable Git commit to run")
@@ -112,8 +122,7 @@ def main() -> None:
     if args.write_only:
         return
 
-    kaggle = shutil.which("kaggle")
-    cmd = ([kaggle] if kaggle else [sys.executable, "-m", "kaggle"])
+    cmd = kaggle_command()
     cmd += ["kernels", "push", "-p", str(push_dir)]
     if args.accelerator:
         cmd += ["--accelerator", args.accelerator]

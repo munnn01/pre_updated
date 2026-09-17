@@ -2,7 +2,13 @@ import json
 
 import pytest
 
-from ops.push_joint_probe import DEFAULT_DATASETS, metadata, notebook, render_cell
+from ops.push_joint_probe import (
+    DEFAULT_DATASETS,
+    kaggle_command,
+    metadata,
+    notebook,
+    render_cell,
+)
 
 
 def test_joint_cell_pins_ref_and_runs_both_probes():
@@ -33,3 +39,12 @@ def test_joint_notebook_and_metadata_are_kaggle_serializable():
 def test_joint_cell_rejects_unsafe_ref(ref):
     with pytest.raises(ValueError):
         render_cell(ref)
+
+
+def test_kaggle_command_falls_back_to_cli_entrypoint(monkeypatch):
+    monkeypatch.setattr("ops.push_joint_probe.shutil.which", lambda _name: None)
+
+    command = kaggle_command()
+
+    assert command[1] == "-c"
+    assert "kaggle.cli" in command[2]
