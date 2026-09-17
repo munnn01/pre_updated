@@ -69,7 +69,7 @@ class StandardCodec:
             # RGB -> encoded elementary stream.
             enc = subprocess.run(
                 [
-                    "ffmpeg", "-y", "-loglevel", "error",
+                    "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
                     "-f", "rawvideo", "-pix_fmt", "rgb24",
                     "-s", f"{w}x{h}", "-r", str(self.fps), "-i", "pipe:0",
                     "-c:v", _ENCODER[self.codec],
@@ -89,10 +89,11 @@ class StandardCodec:
             # Encoded stream -> raw RGB back.
             dec = subprocess.run(
                 [
-                    "ffmpeg", "-y", "-loglevel", "error",
+                    "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
                     "-i", str(bitstream),
                     "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
                 ],
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=True,

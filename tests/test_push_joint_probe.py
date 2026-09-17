@@ -24,6 +24,8 @@ def test_joint_cell_pins_ref_and_runs_both_probes():
     )
     assert "trap finish EXIT" in cell
     assert "joint_probe_outputs.tgz" in cell
+    assert 'RUN_AR="1"' in cell
+    assert 'RUN_OD="1"' in cell
     assert "awsaf49/coco-2017-dataset" in cell
     assert "qktttttttttt/kineticscleaned" in cell
 
@@ -39,6 +41,13 @@ def test_joint_notebook_and_metadata_are_kaggle_serializable():
     assert meta["id"] == "alice/joint-probe"
     assert meta["dataset_sources"] == list(DEFAULT_DATASETS)
     assert meta["enable_gpu"] is True
+
+
+def test_joint_cell_can_run_only_od_without_rewriting_template():
+    cell = render_cell("abc123", run_ar=False, run_od=True)
+
+    assert 'RUN_AR="0"' in cell
+    assert 'RUN_OD="1"' in cell
 
 
 @pytest.mark.parametrize("ref", ["", "bad ref", "\n"])

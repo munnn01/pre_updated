@@ -25,7 +25,13 @@ DEFAULT_DATASETS = (
 )
 
 
-def render_cell(ref: str, profile: str = "quick") -> str:
+def render_cell(
+    ref: str,
+    profile: str = "quick",
+    *,
+    run_ar: bool = True,
+    run_od: bool = True,
+) -> str:
     """Render the checked-in shell template as one Kaggle notebook cell."""
     if not ref or any(c.isspace() for c in ref):
         raise ValueError("ref must be a non-empty Git ref without whitespace")
@@ -33,6 +39,8 @@ def render_cell(ref: str, profile: str = "quick") -> str:
         raise ValueError("profile must be 'quick' or 'confirmatory'")
     shell = TEMPLATE.read_text(encoding="utf-8").replace("__REF__", ref)
     shell = shell.replace('PROFILE="${PROFILE:-quick}"', f'PROFILE="{profile}"')
+    shell = shell.replace('RUN_AR="${RUN_AR:-1}"', f'RUN_AR="{int(run_ar)}"')
+    shell = shell.replace('RUN_OD="${RUN_OD:-1}"', f'RUN_OD="{int(run_od)}"')
     return "%%bash\n" + shell
 
 
@@ -95,7 +103,11 @@ def main() -> None:
     )
     parser.add_argument("--slug", default="pre-updated-joint-od-ar")
     parser.add_argument("--profile", choices=["quick", "confirmatory"], default="quick")
+    parser.add_argument("--skip-ar", action="store_true")
+    parser.add_argument("--skip-od", action="store_true")
     parser.add_argument("--accelerator", default="NvidiaTeslaT4")
+    parser.add_argument("--timeout", type=int, default=3600,
+                        help="Kaggle run limit in seconds (quick default: one hour)")
     parser.add_argument(
         "--datasets",
         default=",".join(DEFAULT_DATASETS),
@@ -112,7 +124,12 @@ def main() -> None:
     push_dir = REPO / "ops" / "_push" / args.slug
     push_dir.mkdir(parents=True, exist_ok=True)
     (push_dir / "notebook.ipynb").write_text(
-        json.dumps(notebook(render_cell(args.commit, args.profile))),
+        json.dumps(notebook(render_cell(
+            args.commit,
+            args.profile,
+            run_ar=not args.skip_ar,
+            run_od=not args.skip_od,
+        ))),
         encoding="utf-8",
     )
     (push_dir / "kernel-metadata.json").write_text(
@@ -125,6 +142,8 @@ def main() -> None:
 
     cmd = kaggle_command()
     cmd += ["kernels", "push", "-p", str(push_dir)]
+    if args.timeout:
+        cmd += ["--timeout", str(args.timeout)]
     if args.accelerator:
         cmd += ["--accelerator", args.accelerator]
     print("[joint-push] pushing private GPU notebook")

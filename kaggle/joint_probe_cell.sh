@@ -7,6 +7,8 @@ REF="__REF__"
 REPO="/tmp/pre_updated"
 OUT="/kaggle/working/outputs"
 INDEX="/kaggle/working/kinetics_hash_split.json"
+RUN_AR="${RUN_AR:-1}"
+RUN_OD="${RUN_OD:-1}"
 
 if [ "$PROFILE" = "confirmatory" ]; then
   N_OD="${N_OD:-500}"
@@ -82,22 +84,26 @@ fi
 
 python scripts/build_train_index.py --root "$KIN_ROOT" --out "$INDEX"
 
-echo "[stage] AR importance-tube start"
-python ops/probe_action_tubes.py \
-  --index "$INDEX" --split test --n-clips "$N_AR" \
-  --num-frames 16 --size 128 --qps "$QPS" \
-  --sigmas "$AR_SIGMAS" --temporal-strengths "$TEMPORAL_STRENGTHS" \
-  --score 0.2 --dilate 0.30 --feather 8 --ar-backbone r3d_18 \
-  --out "$OUT/ar_importance_tubes" 2>&1 | tee "$OUT/ar_importance_tubes.log"
-echo "[stage] AR importance-tube complete"
+if [ "$RUN_AR" = "1" ]; then
+  echo "[stage] AR importance-tube start"
+  python ops/probe_action_tubes.py \
+    --index "$INDEX" --split test --n-clips "$N_AR" \
+    --num-frames 16 --size 128 --qps "$QPS" \
+    --sigmas "$AR_SIGMAS" --temporal-strengths "$TEMPORAL_STRENGTHS" \
+    --score 0.2 --dilate 0.30 --feather 8 --ar-backbone r3d_18 \
+    --out "$OUT/ar_importance_tubes" 2>&1 | tee "$OUT/ar_importance_tubes.log"
+  echo "[stage] AR importance-tube complete"
+fi
 
-echo "[stage] OD background-suppression start"
-python ops/probe_background_suppression.py \
-  --images "$COCO_VAL" --ann "$COCO_ANN" \
-  --n-images "$N_OD" --size 320 --qps "$QPS" \
-  --sigmas "$OD_SIGMAS" --score "$OD_SCORE" --dilate "$OD_DILATE" \
-  --feather "$OD_FEATHER" --bootstrap "$BOOTSTRAP" \
-  --out "$OUT/od_background_suppression" 2>&1 | tee "$OUT/od_background_suppression.log"
-echo "[stage] OD background-suppression complete"
+if [ "$RUN_OD" = "1" ]; then
+  echo "[stage] OD background-suppression start"
+  python ops/probe_background_suppression.py \
+    --images "$COCO_VAL" --ann "$COCO_ANN" \
+    --n-images "$N_OD" --size 320 --qps "$QPS" \
+    --sigmas "$OD_SIGMAS" --score "$OD_SCORE" --dilate "$OD_DILATE" \
+    --feather "$OD_FEATHER" --bootstrap "$BOOTSTRAP" \
+    --out "$OUT/od_background_suppression" 2>&1 | tee "$OUT/od_background_suppression.log"
+  echo "[stage] OD background-suppression complete"
+fi
 
-echo "[done] both probes complete"
+echo "[done] selected probes complete (AR=$RUN_AR OD=$RUN_OD)"
