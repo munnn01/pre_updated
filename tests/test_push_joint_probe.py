@@ -19,6 +19,11 @@ def test_joint_cell_pins_ref_and_runs_both_probes():
     assert 'PROFILE="quick"' in cell
     assert "ops/probe_background_suppression.py" in cell
     assert "ops/probe_action_tubes.py" in cell
+    assert cell.index("ops/probe_action_tubes.py") < cell.index(
+        "ops/probe_background_suppression.py"
+    )
+    assert "trap finish EXIT" in cell
+    assert "joint_probe_outputs.tgz" in cell
     assert "awsaf49/coco-2017-dataset" in cell
     assert "qktttttttttt/kineticscleaned" in cell
 
@@ -30,6 +35,7 @@ def test_joint_notebook_and_metadata_are_kaggle_serializable():
     json.dumps(nb)
     json.dumps(meta)
     assert nb["cells"][0]["source"][0] == "%%bash\n"
+    assert nb["cells"][0]["id"] == "joint-od-ar-probe"
     assert meta["id"] == "alice/joint-probe"
     assert meta["dataset_sources"] == list(DEFAULT_DATASETS)
     assert meta["enable_gpu"] is True

@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.codecs.standard import StandardCodec, ffmpeg_available  # noqa: E402
 from src.metrics.bd_rate import bd_rate  # noqa: E402
 from src.metrics.detection import paired_bootstrap_detection_bd  # noqa: E402
+from src.models.importance_tube import feather_protection  # noqa: E402
 from src.models.mask_suppress import protect_mask, suppress  # noqa: E402
 from probe_detection import (  # noqa: E402  (ops/ is on sys.path when run from repo root)
     Detector,
@@ -61,6 +62,8 @@ def main() -> None:
     ap.add_argument("--score", type=float, default=0.5)
     ap.add_argument("--eval-score", type=float, default=0.05)
     ap.add_argument("--dilate", type=float, default=0.15)
+    ap.add_argument("--feather", type=int, default=0,
+                    help="soft protection band in pixels around the exact-identity boxes")
     ap.add_argument("--mask-backbone", default="fasterrcnn_mobilenet_v3_large_fpn",
                     choices=["fasterrcnn_resnet50_fpn",
                              "fasterrcnn_mobilenet_v3_large_fpn"])
@@ -102,10 +105,14 @@ def main() -> None:
 
     from torchvision.ops import nms  # noqa: E402  (only needed for the mask tally)
     masks = {}
+    core_cover = []
     for i, t, hw, _ in items:
         d = mask_det.predict(t)[0]
-        masks[i] = protect_mask(d["boxes"], d["scores"], d["labels"], a.size,
-                                a.score, a.dilate)
+        core = protect_mask(d["boxes"], d["scores"], d["labels"], a.size,
+                            a.score, a.dilate)
+        core_cover.append(float(core.mean()))
+        masks[i] = (feather_protection(core, a.feather).squeeze(2)
+                    if a.feather else core)
     # The two networks must differ scientifically, but they need not occupy GPU
     # memory simultaneously: masks are now materialised and detached.
     del mask_det
@@ -113,7 +120,8 @@ def main() -> None:
         torch.cuda.empty_cache()
     eval_det = Detector(device, score_thresh=a.eval_score, backbone=a.eval_backbone)
     cover = float(np.mean([m.mean().item() for m in masks.values()]))
-    print(f"[bg] mean protected fraction = {cover:.3f} "
+    print(f"[bg] mean core/effective protected fraction = "
+          f"{np.mean(core_cover):.3f}/{cover:.3f} "
           f"(1 - this is how much of the image may be destroyed)")
 
     arms = ["anchor"] + [f"blur{s:g}" for s in sigmas]
@@ -141,6 +149,7 @@ def main() -> None:
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {"n_images": len(items), "size": a.size, "cover": cover,
+              "core_cover": float(np.mean(core_cover)), "feather": a.feather,
               "sigmas": sigmas, "score": a.score, "eval_score": a.eval_score,
               "dilate": a.dilate, "mask_backbone": a.mask_backbone,
               "eval_backbone": a.eval_backbone, "curves": {}}

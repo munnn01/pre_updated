@@ -39,6 +39,7 @@ def render_cell(ref: str, profile: str = "quick") -> str:
 def notebook(cell: str) -> dict:
     return {
         "cells": [{
+            "id": "joint-od-ar-probe",
             "cell_type": "code",
             "execution_count": None,
             "metadata": {},

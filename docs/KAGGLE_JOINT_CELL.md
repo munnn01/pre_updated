@@ -18,7 +18,8 @@ full five-QP grid, and 1,000 paired bootstrap draws.  Both profiles evaluate:
    ResNet50-FPN measures COCO mAP), and
 2. OD-derived spatio-temporal importance tubes with a frozen Kinetics analyzer.
 
-The final downloadable artifact is
+Each stage writes a dedicated log, and the exit trap creates the final artifact
+even when a probe fails. The downloadable artifact is
 `/kaggle/working/joint_probe_outputs.tgz`; uncompressed JSON diagnostics remain
 under `/kaggle/working/outputs/` even if notebook stdout is truncated.
 
