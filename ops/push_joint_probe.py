@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,8 @@ def render_cell(
     *,
     run_ar: bool = True,
     run_od: bool = True,
+    n_od: int | None = None,
+    od_sigmas: str | None = None,
 ) -> str:
     """Render the checked-in shell template as one Kaggle notebook cell."""
     if not ref or any(c.isspace() for c in ref):
@@ -41,6 +44,18 @@ def render_cell(
     shell = shell.replace('PROFILE="${PROFILE:-quick}"', f'PROFILE="{profile}"')
     shell = shell.replace('RUN_AR="${RUN_AR:-1}"', f'RUN_AR="{int(run_ar)}"')
     shell = shell.replace('RUN_OD="${RUN_OD:-1}"', f'RUN_OD="{int(run_od)}"')
+    if n_od is not None:
+        if n_od <= 0:
+            raise ValueError("n_od must be positive")
+        shell = re.sub(r'N_OD="\$\{N_OD:-\d+\}"', f'N_OD="{n_od}"', shell)
+    if od_sigmas is not None:
+        if not od_sigmas or any(c not in "0123456789.," for c in od_sigmas):
+            raise ValueError("od_sigmas must be a comma-separated numeric grid")
+        shell = re.sub(
+            r'OD_SIGMAS="\$\{OD_SIGMAS:-[^}]+\}"',
+            f'OD_SIGMAS="{od_sigmas}"',
+            shell,
+        )
     return "%%bash\n" + shell
 
 
@@ -105,6 +120,10 @@ def main() -> None:
     parser.add_argument("--profile", choices=["quick", "confirmatory"], default="quick")
     parser.add_argument("--skip-ar", action="store_true")
     parser.add_argument("--skip-od", action="store_true")
+    parser.add_argument("--n-od", type=int, default=None,
+                        help="override the profile's COCO image count")
+    parser.add_argument("--od-sigmas", default=None,
+                        help="override the profile's comma-separated OD sigma grid")
     parser.add_argument("--accelerator", default="NvidiaTeslaT4")
     parser.add_argument("--timeout", type=int, default=3600,
                         help="Kaggle run limit in seconds (quick default: one hour)")
@@ -129,6 +148,8 @@ def main() -> None:
             args.profile,
             run_ar=not args.skip_ar,
             run_od=not args.skip_od,
+            n_od=args.n_od,
+            od_sigmas=args.od_sigmas,
         ))),
         encoding="utf-8",
     )

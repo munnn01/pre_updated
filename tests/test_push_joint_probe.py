@@ -44,10 +44,27 @@ def test_joint_notebook_and_metadata_are_kaggle_serializable():
 
 
 def test_joint_cell_can_run_only_od_without_rewriting_template():
-    cell = render_cell("abc123", run_ar=False, run_od=True)
+    cell = render_cell(
+        "abc123",
+        run_ar=False,
+        run_od=True,
+        n_od=200,
+        od_sigmas="4",
+    )
 
     assert 'RUN_AR="0"' in cell
     assert 'RUN_OD="1"' in cell
+    assert 'N_OD="200"' in cell
+    assert 'OD_SIGMAS="4"' in cell
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [({"n_od": 0}, "n_od"), ({"od_sigmas": "4;rm"}, "od_sigmas")],
+)
+def test_joint_cell_rejects_unsafe_od_overrides(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        render_cell("abc123", **kwargs)
 
 
 @pytest.mark.parametrize("ref", ["", "bad ref", "\n"])
