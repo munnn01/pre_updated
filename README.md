@@ -56,7 +56,11 @@ là các module *thêm/sửa* cấu trúc — thứ mAP không thưởng. Nên h
 ## Chạy
 
 ```bash
-pytest -q                                   # 143 tests
+pytest -q
+
+# Một cell Kaggle chạy cả OD + AR với đúng hai dataset chuẩn
+python ops/push_joint_probe.py --commit <sha> --account <acct> \
+    --profile quick --slug pre-updated-joint-od-ar
 
 # R0 trên Kaggle (eval-only, không train, ~20 phút)
 python ops/push_detection_probe.py --commit <sha> --account <acct> \
@@ -74,6 +78,8 @@ python evaluate.py --config configs/sandwich_coco_det.yaml \
     --ckpt outputs/sandwich_coco_det/checkpoints/preprocessor.pth \
     eval.bootstrap=1000
 ```
+
+Cell copy/paste và cấu hình `quick`/`confirmatory`: [`docs/KAGGLE_JOINT_CELL.md`](docs/KAGGLE_JOINT_CELL.md).
 
 ## Ràng buộc (áp cho mọi thí nghiệm ở đây)
 
