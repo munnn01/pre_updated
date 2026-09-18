@@ -70,6 +70,9 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     assert 'OD_MASK_GRID="16"' in cell
     assert 'QPS="30,35,40,45,50"' in cell
     assert 'BOOTSTRAP="1000"' in cell
+    assert 'if [ "$RUN_AR" = "1" ]; then\n  python scripts/build_train_index.py' in cell
+    assert 'ERROR: RUN_OD=1 requires awsaf49/coco-2017-dataset' in cell
+    assert 'ERROR: RUN_AR=1 requires qktttttttttt/kineticscleaned' in cell
 
 
 @pytest.mark.parametrize(

@@ -66,33 +66,46 @@ python -m pip install -q pycocotools
 python -c 'import torch, torchvision; print("torch", torch.__version__, "torchvision", torchvision.__version__, "cuda", torch.cuda.is_available())'
 ffmpeg -hide_banner -encoders 2>/dev/null | grep -E 'libx264|libx265' | head
 
-# Support both Kaggle's classic and its newer owner/slug mount layouts.
-COCO_VAL="$(find /kaggle/input -maxdepth 10 -type d -name val2017 -print -quit || true)"
-COCO_ANN="$(find /kaggle/input -maxdepth 10 -type f -name instances_val2017.json -print -quit || true)"
+# Support both Kaggle's classic and its newer owner/slug mount layouts.  Inputs
+# are task-conditional: an OD-only notebook must not fail because Kinetics was
+# deliberately not attached, and the symmetric rule applies to AR-only runs.
+COCO_VAL=""
+COCO_ANN=""
+if [ "$RUN_OD" = "1" ]; then
+  COCO_VAL="$(find /kaggle/input -maxdepth 10 -type d -name val2017 -print -quit || true)"
+  COCO_ANN="$(find /kaggle/input -maxdepth 10 -type f -name instances_val2017.json -print -quit || true)"
+fi
 KIN_ROOT=""
-for candidate in \
-  /kaggle/input/kineticscleaned \
-  /kaggle/input/datasets/qktttttttttt/kineticscleaned; do
-  if [ -d "$candidate" ]; then
-    KIN_ROOT="$candidate"
-    break
-  fi
-done
-if [ -z "$KIN_ROOT" ]; then
-  KIN_VIDEO="$(find /kaggle/input -maxdepth 10 -type f \( -iname '*.mp4' -o -iname '*.avi' -o -iname '*.mkv' \) -print -quit || true)"
-  if [ -n "$KIN_VIDEO" ]; then
-    KIN_ROOT="/kaggle/input"
+if [ "$RUN_AR" = "1" ]; then
+  for candidate in \
+    /kaggle/input/kineticscleaned \
+    /kaggle/input/datasets/qktttttttttt/kineticscleaned; do
+    if [ -d "$candidate" ]; then
+      KIN_ROOT="$candidate"
+      break
+    fi
+  done
+  if [ -z "$KIN_ROOT" ]; then
+    KIN_VIDEO="$(find /kaggle/input -maxdepth 10 -type f \( -iname '*.mp4' -o -iname '*.avi' -o -iname '*.mkv' \) -print -quit || true)"
+    if [ -n "$KIN_VIDEO" ]; then
+      KIN_ROOT="/kaggle/input"
+    fi
   fi
 fi
 
 printf '[inputs] COCO val=%s\n[inputs] COCO ann=%s\n[inputs] Kinetics root=%s\n' \
   "$COCO_VAL" "$COCO_ANN" "$KIN_ROOT"
-if [ -z "$COCO_VAL" ] || [ -z "$COCO_ANN" ] || [ -z "$KIN_ROOT" ]; then
-  echo "ERROR: attach awsaf49/coco-2017-dataset and qktttttttttt/kineticscleaned" >&2
+if [ "$RUN_OD" = "1" ] && { [ -z "$COCO_VAL" ] || [ -z "$COCO_ANN" ]; }; then
+  echo "ERROR: RUN_OD=1 requires awsaf49/coco-2017-dataset" >&2
   exit 2
 fi
-
-python scripts/build_train_index.py --root "$KIN_ROOT" --out "$INDEX"
+if [ "$RUN_AR" = "1" ] && [ -z "$KIN_ROOT" ]; then
+  echo "ERROR: RUN_AR=1 requires qktttttttttt/kineticscleaned" >&2
+  exit 2
+fi
+if [ "$RUN_AR" = "1" ]; then
+  python scripts/build_train_index.py --root "$KIN_ROOT" --out "$INDEX"
+fi
 
 if [ "$RUN_AR" = "1" ]; then
   echo "[stage] AR importance-tube start"
