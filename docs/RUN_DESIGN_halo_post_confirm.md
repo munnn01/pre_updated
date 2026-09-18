@@ -24,6 +24,27 @@ Execution is sequential by task at the user's request: phase A evaluates H.264
 only and compares QP40 against QP45.  H.265 is not launched until the H.264
 result has been read and the next configuration has been fixed.
 
+## Phase A result: H.264
+
+Both 500-image runs produced byte-for-byte identical anchor and PRE-only
+curves, so the gate comparison is paired on the same sample.
+
+| gate | halo8 + POST BD-rate | worst per-QP mAP gap |
+|---|---:|---:|
+| QP >= 40 | -12.097% | -0.00457 |
+| QP >= 45 | **-13.145%** | **-0.00414** |
+
+QP45 wins by 1.048 percentage points.  The entire difference is at QP40:
+enabling POST there lowers mAP by 0.00501 relative to PRE-only.  H.264 is
+therefore frozen at **QP >= 45**; QP40 is closed and must not be retuned.
+
+## Phase B: H.265-only comparison
+
+The completed QP40 run already contains the H.265 QP40 curve on the same seed.
+The only additional run is H.265-only QP45 with all other fields unchanged.
+QP40 and QP45 are compared only after confirming exact anchor and PRE-only
+curve equality.  No additional threshold is opened on this sample.
+
 - Data: 500 annotated COCO val2017 images, letterboxed to 320 x 320.
 - QPs: 30, 35, 40, 45, 50; real x264/x265, medium preset, intra-only.
 - Mask analyzer: Faster R-CNN MobileNet-V3-Large-FPN, score 0.20.
