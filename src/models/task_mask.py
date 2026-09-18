@@ -60,6 +60,41 @@ def task_saliency(analyzer, x: torch.Tensor, target, blur: int = 5,
     return mask.detach()
 
 
+def hard_saliency_mask(
+    saliency: torch.Tensor,
+    protect_fraction: float,
+    temporal_mode: str = "clip",
+) -> torch.Tensor:
+    """Convert soft saliency into a fixed-budget exact-identity mask.
+
+    ``clip`` ranks every spatiotemporal location jointly. ``tube`` first takes
+    the temporal maximum, ranks spatial locations, and repeats the resulting
+    mask across time.  The latter deliberately trades localisation for a stable
+    codec-friendly tube that cannot flicker from frame to frame.
+    """
+    if saliency.ndim != 5 or saliency.shape[1] != 1:
+        raise ValueError(
+            f"expected saliency [B,1,T,H,W], got {tuple(saliency.shape)}"
+        )
+    if not 0.0 < protect_fraction < 1.0:
+        raise ValueError("protect_fraction must be between zero and one")
+    if temporal_mode not in {"clip", "tube"}:
+        raise ValueError("temporal_mode must be 'clip' or 'tube'")
+
+    source = saliency
+    if temporal_mode == "tube":
+        source = source.amax(dim=2, keepdim=True)
+    b = source.shape[0]
+    flat = source.reshape(b, -1)
+    threshold = torch.quantile(
+        flat.float(), 1.0 - protect_fraction, dim=1, keepdim=True
+    ).to(dtype=source.dtype)
+    mask = (flat >= threshold).to(dtype=source.dtype).reshape(source.shape)
+    if temporal_mode == "tube":
+        mask = mask.expand(-1, -1, saliency.shape[2], -1, -1)
+    return mask.detach()
+
+
 def masked_tv(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     """Total variation of ``x`` weighted by a spatial ``weight`` (same H,W).
 
@@ -97,7 +132,7 @@ def _demo() -> None:
             self.task_name = "toy"
             self.c = nn.Conv3d(3, 2, 3, padding=1)
 
-        def accuracy_loss(self, x_hat, target):
+        def accuracy_loss(self, x_hat, _target):
             # loss concentrates gradient on a bright central patch
             return self.c(x_hat).pow(2).mean(), {}
 

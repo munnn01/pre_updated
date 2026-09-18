@@ -19,6 +19,7 @@ def test_joint_cell_pins_ref_and_runs_both_probes():
     assert "ops/probe_background_suppression.py" in cell
     assert "ops/probe_action_tubes.py" in cell
     assert "ops/probe_action_motion_post.py" in cell
+    assert "ops/probe_action_saliency.py" in cell
     assert cell.index("ops/probe_action_tubes.py") < cell.index(
         "ops/probe_background_suppression.py"
     )
@@ -71,6 +72,11 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         ar_motion_sigma=1.0,
         ar_motion_dilation=3,
         ar_motion_feather=1,
+        ar_saliency_teacher="r3d_18",
+        ar_protect_fractions="0.15,0.25,0.4",
+        ar_saliency_modes="clip,tube",
+        ar_saliency_sigma=8,
+        ar_temporal_strength=0.75,
         qps="30,35,40,45,50",
         bootstrap=1000,
     )
@@ -99,6 +105,11 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     assert 'AR_MOTION_SIGMA="1"' in cell
     assert 'AR_MOTION_DILATION="3"' in cell
     assert 'AR_MOTION_FEATHER="1"' in cell
+    assert 'AR_SALIENCY_TEACHER="r3d_18"' in cell
+    assert 'AR_PROTECT_FRACTIONS="0.15,0.25,0.4"' in cell
+    assert 'AR_SALIENCY_MODES="clip,tube"' in cell
+    assert 'AR_SALIENCY_SIGMA="8"' in cell
+    assert 'AR_TEMPORAL_STRENGTH="0.75"' in cell
     assert '--seed "$OD_SEED"' in cell
     assert '--codecs "$OD_CODECS"' in cell
     assert '--mask-backbone "$OD_MASK_BACKBONE"' in cell
@@ -138,6 +149,12 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         ({"ar_motion_sigma": 0}, "ar_motion_sigma"),
         ({"ar_motion_dilation": -1}, "ar_motion_dilation"),
         ({"ar_motion_feather": -1}, "ar_motion_feather"),
+        ({"ar_saliency_teacher": "slowfast"}, "ar_saliency_teacher"),
+        ({"ar_protect_fractions": "0,0.25"}, "ar_protect_fractions"),
+        ({"ar_protect_fractions": "0.25,0.25"}, "ar_protect_fractions"),
+        ({"ar_saliency_modes": "clip,frame"}, "ar_saliency_modes"),
+        ({"ar_saliency_sigma": 0}, "ar_saliency_sigma"),
+        ({"ar_temporal_strength": 1.1}, "ar_temporal_strength"),
         ({"qps": "30;45"}, "qps"),
         ({"bootstrap": -1}, "bootstrap"),
     ],

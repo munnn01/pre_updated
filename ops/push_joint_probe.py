@@ -61,6 +61,11 @@ def render_cell(
     ar_motion_sigma: float | None = None,
     ar_motion_dilation: int | None = None,
     ar_motion_feather: int | None = None,
+    ar_saliency_teacher: str | None = None,
+    ar_protect_fractions: str | None = None,
+    ar_saliency_modes: str | None = None,
+    ar_saliency_sigma: float | None = None,
+    ar_temporal_strength: float | None = None,
     qps: str | None = None,
     bootstrap: int | None = None,
 ) -> str:
@@ -161,8 +166,8 @@ def render_cell(
                 shell,
             )
     if ar_probe is not None:
-        if ar_probe not in {"tubes", "post", "motion"}:
-            raise ValueError("ar_probe must be tubes, post, or motion")
+        if ar_probe not in {"tubes", "post", "motion", "saliency"}:
+            raise ValueError("ar_probe must be tubes, post, motion, or saliency")
         shell = re.sub(
             r'AR_PROBE="\$\{AR_PROBE:-[^}]+\}"',
             f'AR_PROBE="{ar_probe}"',
@@ -239,6 +244,61 @@ def render_cell(
                 f'{variable}="{value}"',
                 shell,
             )
+    if ar_saliency_teacher is not None:
+        if ar_saliency_teacher not in AR_BACKBONES:
+            raise ValueError("ar_saliency_teacher is not supported")
+        shell = re.sub(
+            r'AR_SALIENCY_TEACHER="\$\{AR_SALIENCY_TEACHER:-[^}]+\}"',
+            f'AR_SALIENCY_TEACHER="{ar_saliency_teacher}"',
+            shell,
+        )
+    if ar_protect_fractions is not None:
+        try:
+            fractions = [
+                float(value) for value in ar_protect_fractions.split(",") if value
+            ]
+        except ValueError as exc:
+            raise ValueError("ar_protect_fractions must be numeric") from exc
+        if (
+            not fractions
+            or len(fractions) != len(set(fractions))
+            or any(not 0.0 < value < 1.0 for value in fractions)
+        ):
+            raise ValueError("ar_protect_fractions must be unique values in (0,1)")
+        shell = re.sub(
+            r'AR_PROTECT_FRACTIONS="\$\{AR_PROTECT_FRACTIONS:-[^}]+\}"',
+            f'AR_PROTECT_FRACTIONS="{",".join(f"{value:g}" for value in fractions)}"',
+            shell,
+        )
+    if ar_saliency_modes is not None:
+        modes = [value for value in ar_saliency_modes.split(",") if value]
+        if (
+            not modes
+            or len(modes) != len(set(modes))
+            or set(modes) - {"clip", "tube"}
+        ):
+            raise ValueError("ar_saliency_modes must be a unique subset of clip,tube")
+        shell = re.sub(
+            r'AR_SALIENCY_MODES="\$\{AR_SALIENCY_MODES:-[^}]+\}"',
+            f'AR_SALIENCY_MODES="{",".join(modes)}"',
+            shell,
+        )
+    if ar_saliency_sigma is not None:
+        if ar_saliency_sigma <= 0:
+            raise ValueError("ar_saliency_sigma must be positive")
+        shell = re.sub(
+            r'AR_SALIENCY_SIGMA="\$\{AR_SALIENCY_SIGMA:-[^}]+\}"',
+            f'AR_SALIENCY_SIGMA="{ar_saliency_sigma:g}"',
+            shell,
+        )
+    if ar_temporal_strength is not None:
+        if not 0.0 <= ar_temporal_strength <= 1.0:
+            raise ValueError("ar_temporal_strength must be in [0,1]")
+        shell = re.sub(
+            r'AR_TEMPORAL_STRENGTH="\$\{AR_TEMPORAL_STRENGTH:-[^}]+\}"',
+            f'AR_TEMPORAL_STRENGTH="{ar_temporal_strength:g}"',
+            shell,
+        )
     if qps is not None:
         if not qps or any(c not in "0123456789," for c in qps):
             raise ValueError("qps must be a comma-separated integer grid")
@@ -335,7 +395,9 @@ def main() -> None:
                         help="comma-separated OD codecs: h264,h265")
     parser.add_argument("--od-mask-backbone", choices=sorted(OD_BACKBONES), default=None)
     parser.add_argument("--od-eval-backbone", choices=sorted(OD_BACKBONES), default=None)
-    parser.add_argument("--ar-probe", choices=["tubes", "post", "motion"], default=None)
+    parser.add_argument(
+        "--ar-probe", choices=["tubes", "post", "motion", "saliency"], default=None
+    )
     parser.add_argument("--ar-split", choices=["train", "val", "test"], default=None)
     parser.add_argument("--ar-backbone", choices=sorted(AR_BACKBONES), default=None)
     parser.add_argument("--ar-post-sigmas", default=None)
@@ -344,6 +406,11 @@ def main() -> None:
     parser.add_argument("--ar-motion-sigma", type=float, default=None)
     parser.add_argument("--ar-motion-dilation", type=int, default=None)
     parser.add_argument("--ar-motion-feather", type=int, default=None)
+    parser.add_argument("--ar-saliency-teacher", choices=sorted(AR_BACKBONES), default=None)
+    parser.add_argument("--ar-protect-fractions", default=None)
+    parser.add_argument("--ar-saliency-modes", default=None)
+    parser.add_argument("--ar-saliency-sigma", type=float, default=None)
+    parser.add_argument("--ar-temporal-strength", type=float, default=None)
     parser.add_argument("--qps", default=None,
                         help="override the profile's comma-separated QP grid")
     parser.add_argument("--bootstrap", type=int, default=None,
@@ -394,6 +461,11 @@ def main() -> None:
             ar_motion_sigma=args.ar_motion_sigma,
             ar_motion_dilation=args.ar_motion_dilation,
             ar_motion_feather=args.ar_motion_feather,
+            ar_saliency_teacher=args.ar_saliency_teacher,
+            ar_protect_fractions=args.ar_protect_fractions,
+            ar_saliency_modes=args.ar_saliency_modes,
+            ar_saliency_sigma=args.ar_saliency_sigma,
+            ar_temporal_strength=args.ar_temporal_strength,
             qps=args.qps,
             bootstrap=args.bootstrap,
         ))),

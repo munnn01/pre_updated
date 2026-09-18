@@ -39,6 +39,11 @@ if [ "$PROFILE" = "confirmatory" ]; then
   AR_MOTION_SIGMA="${AR_MOTION_SIGMA:-1}"
   AR_MOTION_DILATION="${AR_MOTION_DILATION:-2}"
   AR_MOTION_FEATHER="${AR_MOTION_FEATHER:-2}"
+  AR_SALIENCY_TEACHER="${AR_SALIENCY_TEACHER:-r3d_18}"
+  AR_PROTECT_FRACTIONS="${AR_PROTECT_FRACTIONS:-0.15,0.25,0.4}"
+  AR_SALIENCY_MODES="${AR_SALIENCY_MODES:-clip,tube}"
+  AR_SALIENCY_SIGMA="${AR_SALIENCY_SIGMA:-8}"
+  AR_TEMPORAL_STRENGTH="${AR_TEMPORAL_STRENGTH:-0.75}"
   BOOTSTRAP="${BOOTSTRAP:-1000}"
 else
   N_OD="${N_OD:-50}"
@@ -69,6 +74,11 @@ else
   AR_MOTION_SIGMA="${AR_MOTION_SIGMA:-1}"
   AR_MOTION_DILATION="${AR_MOTION_DILATION:-2}"
   AR_MOTION_FEATHER="${AR_MOTION_FEATHER:-2}"
+  AR_SALIENCY_TEACHER="${AR_SALIENCY_TEACHER:-r3d_18}"
+  AR_PROTECT_FRACTIONS="${AR_PROTECT_FRACTIONS:-0.15,0.25,0.4}"
+  AR_SALIENCY_MODES="${AR_SALIENCY_MODES:-clip,tube}"
+  AR_SALIENCY_SIGMA="${AR_SALIENCY_SIGMA:-8}"
+  AR_TEMPORAL_STRENGTH="${AR_TEMPORAL_STRENGTH:-0.75}"
   BOOTSTRAP="${BOOTSTRAP:-0}"
 fi
 
@@ -157,6 +167,20 @@ if [ "$RUN_AR" = "1" ]; then
       --ar-backbone "$AR_BACKBONE" --out "$OUT/ar_motion_post" \
       2>&1 | tee "$OUT/ar_motion_post.log"
     echo "[stage] AR motion-preserving POST complete"
+  elif [ "$AR_PROBE" = "saliency" ]; then
+    echo "[stage] AR action-saliency suppression start"
+    python ops/probe_action_saliency.py \
+      --index "$INDEX" --split "$AR_SPLIT" --n-clips "$N_AR" \
+      --num-frames 16 --size 128 --qps "$QPS" \
+      --protect-fractions "$AR_PROTECT_FRACTIONS" \
+      --temporal-modes "$AR_SALIENCY_MODES" \
+      --sigma "$AR_SALIENCY_SIGMA" \
+      --temporal-strength "$AR_TEMPORAL_STRENGTH" \
+      --temporal-radius 0 --feather 1 --motion-tau 0.05 \
+      --saliency-teacher "$AR_SALIENCY_TEACHER" \
+      --eval-backbone "$AR_BACKBONE" --out "$OUT/ar_saliency" \
+      2>&1 | tee "$OUT/ar_saliency.log"
+    echo "[stage] AR action-saliency suppression complete"
   else
     echo "[stage] AR importance-tube start"
     python ops/probe_action_tubes.py \
