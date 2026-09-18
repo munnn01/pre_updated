@@ -67,6 +67,16 @@ def _float_grid(raw: str, name: str, *, positive: bool = False) -> list[float]:
     return list(dict.fromkeys(values))
 
 
+def _codec_grid(raw: str) -> list[str]:
+    values = [value.strip() for value in raw.split(",") if value.strip()]
+    if not values or len(values) != len(set(values)):
+        raise ValueError("codecs must be a non-empty unique list")
+    invalid = set(values) - {"h264", "h265"}
+    if invalid:
+        raise ValueError(f"unsupported codecs: {sorted(invalid)}")
+    return values
+
+
 def _base_arm(background_sigma: float, roi_sigma: float) -> str:
     name = f"blur{background_sigma:g}"
     if roi_sigma > 0:
@@ -96,6 +106,8 @@ def main() -> None:
     ap.add_argument("--n-images", type=int, default=500)
     ap.add_argument("--size", type=int, default=320)
     ap.add_argument("--qps", default="30,35,40,45,50")
+    ap.add_argument("--codecs", default="h264,h265",
+                    help="comma-separated subset of h264,h265")
     ap.add_argument("--sigmas", default="4,8,16")
     ap.add_argument("--roi-sigmas", default="0",
                     help="comma-separated Gaussian sigmas inside protected ROI")
@@ -135,6 +147,7 @@ def main() -> None:
     post_sigmas = _float_grid(a.post_sigmas, "post_sigmas")
     positive_post_sigmas = [s for s in post_sigmas if s > 0]
     qps = [int(q) for q in a.qps.split(",")]
+    codecs = _codec_grid(a.codecs)
     if a.min_margin_px < 0:
         raise ValueError("min_margin_px must be non-negative")
     if a.mask_grid <= 0:
@@ -191,7 +204,7 @@ def main() -> None:
         arms.append(base)
         arms.extend(_post_arm(base, s, a.post_min_qp) for s in positive_post_sigmas)
     rec = {arm: {} for arm in arms}
-    for codec_name in ("h264", "h265"):
+    for codec_name in codecs:
         for qp in qps:
             sc = StandardCodec(codec=codec_name, qp=qp, preset="medium")
             for arm in arms:
@@ -242,8 +255,8 @@ def main() -> None:
               "score": a.score, "eval_score": a.eval_score,
               "dilate": a.dilate, "min_margin_px": a.min_margin_px,
               "mask_grid": a.mask_grid, "mask_backbone": a.mask_backbone,
-              "eval_backbone": a.eval_backbone, "curves": {}}
-    for codec_name in ("h264", "h265"):
+              "eval_backbone": a.eval_backbone, "codecs": codecs, "curves": {}}
+    for codec_name in codecs:
         curves = {}
         for arm in arms:
             rates, aps = [], []
@@ -298,7 +311,7 @@ def main() -> None:
     # Persist detector records and point estimates before the CPU-heavy CI.
     # A Kaggle timeout during bootstrap must not throw away the expensive GPU
     # sweep.  Each completed codec is checkpointed independently as well.
-    for codec_name in ("h264", "h265"):
+    for codec_name in codecs:
         if not a.bootstrap:
             break
         print(f"[bg] bootstrap {codec_name}: {a.bootstrap} paired draws", flush=True)

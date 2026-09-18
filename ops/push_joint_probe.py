@@ -40,6 +40,7 @@ def render_cell(
     od_min_margin_px: float | None = None,
     od_mask_grid: int | None = None,
     od_seed: int | None = None,
+    od_codecs: str | None = None,
     qps: str | None = None,
     bootstrap: int | None = None,
 ) -> str:
@@ -106,6 +107,17 @@ def render_cell(
         shell = re.sub(
             r'OD_SEED="\$\{OD_SEED:-\d+\}"',
             f'OD_SEED="{od_seed}"',
+            shell,
+        )
+    if od_codecs is not None:
+        codecs = [value.strip() for value in od_codecs.split(",") if value.strip()]
+        if not codecs or len(codecs) != len(set(codecs)) or any(
+            value not in {"h264", "h265"} for value in codecs
+        ):
+            raise ValueError("od_codecs must be a unique comma-separated subset of h264,h265")
+        shell = re.sub(
+            r'OD_CODECS="\$\{OD_CODECS:-[^}]+\}"',
+            f'OD_CODECS="{",".join(codecs)}"',
             shell,
         )
     if qps is not None:
@@ -197,6 +209,8 @@ def main() -> None:
     parser.add_argument("--od-mask-grid", type=int, default=None)
     parser.add_argument("--od-seed", type=int, default=None,
                         help="deterministic COCO shuffle seed")
+    parser.add_argument("--od-codecs", default=None,
+                        help="comma-separated OD codecs: h264,h265")
     parser.add_argument("--qps", default=None,
                         help="override the profile's comma-separated QP grid")
     parser.add_argument("--bootstrap", type=int, default=None,
@@ -233,6 +247,7 @@ def main() -> None:
             od_min_margin_px=args.od_min_margin_px,
             od_mask_grid=args.od_mask_grid,
             od_seed=args.od_seed,
+            od_codecs=args.od_codecs,
             qps=args.qps,
             bootstrap=args.bootstrap,
         ))),

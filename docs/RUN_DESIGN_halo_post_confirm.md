@@ -20,6 +20,10 @@ with the worst per-QP mAP gap at -0.0198.
 Both runs use the same deterministic COCO shuffle seed (`20260918`) so the two
 gate thresholds can be compared point-for-point.
 
+Execution is sequential by task at the user's request: phase A evaluates H.264
+only and compares QP40 against QP45.  H.265 is not launched until the H.264
+result has been read and the next configuration has been fixed.
+
 - Data: 500 annotated COCO val2017 images, letterboxed to 320 x 320.
 - QPs: 30, 35, 40, 45, 50; real x264/x265, medium preset, intra-only.
 - Mask analyzer: Faster R-CNN MobileNet-V3-Large-FPN, score 0.20.
@@ -43,4 +47,3 @@ gate thresholds can be compared point-for-point.
    do not tune another threshold on this sample.
 4. The selected candidate becomes the headline only if the paired 95% CI
    excludes zero for at least one codec.  Otherwise retain it as exploratory.
-
