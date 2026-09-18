@@ -34,6 +34,8 @@ def render_cell(
     run_od: bool = True,
     n_od: int | None = None,
     od_sigmas: str | None = None,
+    qps: str | None = None,
+    bootstrap: int | None = None,
 ) -> str:
     """Render the checked-in shell template as one Kaggle notebook cell."""
     if not ref or any(c.isspace() for c in ref):
@@ -54,6 +56,18 @@ def render_cell(
         shell = re.sub(
             r'OD_SIGMAS="\$\{OD_SIGMAS:-[^}]+\}"',
             f'OD_SIGMAS="{od_sigmas}"',
+            shell,
+        )
+    if qps is not None:
+        if not qps or any(c not in "0123456789," for c in qps):
+            raise ValueError("qps must be a comma-separated integer grid")
+        shell = re.sub(r'QPS="\$\{QPS:-[^}]+\}"', f'QPS="{qps}"', shell)
+    if bootstrap is not None:
+        if bootstrap < 0:
+            raise ValueError("bootstrap must be non-negative")
+        shell = re.sub(
+            r'BOOTSTRAP="\$\{BOOTSTRAP:-\d+\}"',
+            f'BOOTSTRAP="{bootstrap}"',
             shell,
         )
     return "%%bash\n" + shell
@@ -124,6 +138,10 @@ def main() -> None:
                         help="override the profile's COCO image count")
     parser.add_argument("--od-sigmas", default=None,
                         help="override the profile's comma-separated OD sigma grid")
+    parser.add_argument("--qps", default=None,
+                        help="override the profile's comma-separated QP grid")
+    parser.add_argument("--bootstrap", type=int, default=None,
+                        help="override paired image-bootstrap draws")
     parser.add_argument("--accelerator", default="NvidiaTeslaT4")
     parser.add_argument("--timeout", type=int, default=3600,
                         help="Kaggle run limit in seconds (quick default: one hour)")
@@ -150,6 +168,8 @@ def main() -> None:
             run_od=not args.skip_od,
             n_od=args.n_od,
             od_sigmas=args.od_sigmas,
+            qps=args.qps,
+            bootstrap=args.bootstrap,
         ))),
         encoding="utf-8",
     )

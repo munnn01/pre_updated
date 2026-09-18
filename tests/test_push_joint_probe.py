@@ -50,17 +50,26 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         run_od=True,
         n_od=200,
         od_sigmas="4",
+        qps="30,35,40,45,50",
+        bootstrap=1000,
     )
 
     assert 'RUN_AR="0"' in cell
     assert 'RUN_OD="1"' in cell
     assert 'N_OD="200"' in cell
     assert 'OD_SIGMAS="4"' in cell
+    assert 'QPS="30,35,40,45,50"' in cell
+    assert 'BOOTSTRAP="1000"' in cell
 
 
 @pytest.mark.parametrize(
     ("kwargs", "message"),
-    [({"n_od": 0}, "n_od"), ({"od_sigmas": "4;rm"}, "od_sigmas")],
+    [
+        ({"n_od": 0}, "n_od"),
+        ({"od_sigmas": "4;rm"}, "od_sigmas"),
+        ({"qps": "30;45"}, "qps"),
+        ({"bootstrap": -1}, "bootstrap"),
+    ],
 )
 def test_joint_cell_rejects_unsafe_od_overrides(kwargs, message):
     with pytest.raises(ValueError, match=message):
