@@ -113,7 +113,7 @@ def main() -> None:
                     help="comma-separated Gaussian sigmas inside protected ROI")
     ap.add_argument("--post-sigmas", default="0",
                     help="comma-separated zero-bit Gaussian sigmas after decode")
-    ap.add_argument("--post-min-qp", type=int, default=40,
+    ap.add_argument("--post-min-qp", type=int, default=45,
                     help="post-filter is identity below this QP")
     ap.add_argument("--score", type=float, default=0.5)
     ap.add_argument("--eval-score", type=float, default=0.05)

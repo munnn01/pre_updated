@@ -28,6 +28,7 @@ def test_joint_cell_pins_ref_and_runs_both_probes():
     assert 'RUN_OD="1"' in cell
     assert "awsaf49/coco-2017-dataset" in cell
     assert "qktttttttttt/kineticscleaned" in cell
+    assert 'OD_POST_MIN_QP="${OD_POST_MIN_QP:-45}"' in cell
 
 
 def test_joint_notebook_and_metadata_are_kaggle_serializable():

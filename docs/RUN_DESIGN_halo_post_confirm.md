@@ -45,6 +45,19 @@ The only additional run is H.265-only QP45 with all other fields unchanged.
 QP40 and QP45 are compared only after confirming exact anchor and PRE-only
 curve equality.  No additional threshold is opened on this sample.
 
+## Phase B result and final gate
+
+The H.265 QP45 run matched the QP40 anchor and PRE-only curves exactly.
+
+| gate | halo8 + POST BD-rate | worst per-QP mAP gap |
+|---|---:|---:|
+| QP >= 40 | -6.734% | -0.01007 |
+| QP >= 45 | **-8.017%** | **-0.00651** |
+
+QP45 wins by 1.283 percentage points.  As on H.264, applying POST at QP40
+damages the otherwise preserved QP40 point.  The final shared decoder rule is
+therefore **Gaussian POST sigma 1 only when QP >= 45 for both codecs**.
+
 - Data: 500 annotated COCO val2017 images, letterboxed to 320 x 320.
 - QPs: 30, 35, 40, 45, 50; real x264/x265, medium preset, intra-only.
 - Mask analyzer: Faster R-CNN MobileNet-V3-Large-FPN, score 0.20.

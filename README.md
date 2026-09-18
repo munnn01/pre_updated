@@ -51,6 +51,7 @@ là các module *thêm/sửa* cấu trúc — thứ mAP không thưởng. Nên h
 | R0 — mask từ detector + suppression nền | ✅ implement + test (`tests/test_mask_suppress.py`) |
 | R0 full n=500, 5 QP, held-out detector | ✅ point estimate: H.264 −9.07%, H.265 −5.44%; chờ CI |
 | R0.5 — dual-region PRE + high-QP Gaussian POST | ✅ code; screening design đã khóa |
+| R0.5 halo8 + POST σ=1, held-out n=500 | ✅ QP45 chốt: H.264 −13.15%, H.265 −8.02%; gap PASS |
 | R1 — gate học được | ⏸ chỉ mở nếu R0 dương |
 | Importance-tube probe trên Kinetics | ❌ n=20: H.264 +9.80%, H.265 +8.57%; không scale detector-only tube |
 
@@ -66,7 +67,7 @@ python ops/push_joint_probe.py --commit <sha> --account <acct> \
 # R0.5 screening: identity/mild-ROI PRE x identity/Gaussian POST
 python ops/push_joint_probe.py --commit <sha> --account <acct> --skip-ar \
     --profile quick --n-od 100 --qps 30,35,40,45,50 --od-sigmas 4 \
-    --od-roi-sigmas 0,1 --od-post-sigmas 0,1 --od-post-min-qp 40 \
+    --od-roi-sigmas 0,1 --od-post-sigmas 0,1 --od-post-min-qp 45 \
     --bootstrap 0 --slug pre-updated-od-dualregion
 
 # R0 trên Kaggle (eval-only, không train, ~20 phút)
