@@ -171,20 +171,6 @@ def main() -> None:
             print(f"[bg] {codec_name} {arm}: BD = "
                   f"{curves[arm]['bd_vs_anchor']:+.2f}%")
         result["curves"][codec_name] = curves
-        if a.bootstrap:
-            result.setdefault("bootstrap_ci", {})[codec_name] = (
-                paired_bootstrap_detection_bd(
-                    rec,
-                    codec=codec_name,
-                    qps=qps,
-                    gt_by_id=gt_by_id,
-                    image_ids=ids,
-                    ann_meta=ann_meta,
-                    arms=arms[1:],
-                    n_boot=a.bootstrap,
-                    seed=a.seed,
-                )
-            )
 
     # records for the offline bootstrap CI
     flat = {}
@@ -204,6 +190,7 @@ def main() -> None:
             flat[f"{tag}_labels"] = np.asarray(labs, dtype=np.int32)
             flat[f"{tag}_offsets"] = np.asarray(offs, dtype=np.int64)
     np.savez_compressed(out_dir / "per_image_records.npz", **flat)
+    print(f"[bg] wrote {out_dir / 'per_image_records.npz'}")
 
     def finite(o):
         if isinstance(o, dict):
@@ -214,8 +201,34 @@ def main() -> None:
             return None
         return o
 
-    (out_dir / "probe_bgsuppress.json").write_text(json.dumps(finite(result), indent=2))
-    print(f"[bg] wrote {out_dir / 'probe_bgsuppress.json'}")
+    result_path = out_dir / "probe_bgsuppress.json"
+    result_path.write_text(json.dumps(finite(result), indent=2))
+    print(f"[bg] wrote preliminary {result_path}")
+
+    # Persist detector records and point estimates before the CPU-heavy CI.
+    # A Kaggle timeout during bootstrap must not throw away the expensive GPU
+    # sweep.  Each completed codec is checkpointed independently as well.
+    for codec_name in ("h264", "h265"):
+        if not a.bootstrap:
+            break
+        print(f"[bg] bootstrap {codec_name}: {a.bootstrap} paired draws", flush=True)
+        result.setdefault("bootstrap_ci", {})[codec_name] = (
+            paired_bootstrap_detection_bd(
+                rec,
+                codec=codec_name,
+                qps=qps,
+                gt_by_id=gt_by_id,
+                image_ids=ids,
+                ann_meta=ann_meta,
+                arms=arms[1:],
+                n_boot=a.bootstrap,
+                seed=a.seed,
+            )
+        )
+        result_path.write_text(json.dumps(finite(result), indent=2))
+        print(f"[bg] checkpointed bootstrap {codec_name}", flush=True)
+
+    print(f"[bg] wrote {result_path}")
 
 
 if __name__ == "__main__":
