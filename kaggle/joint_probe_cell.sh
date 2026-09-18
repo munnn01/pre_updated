@@ -23,6 +23,7 @@ if [ "$PROFILE" = "confirmatory" ]; then
   OD_POST_MIN_QP="${OD_POST_MIN_QP:-40}"
   OD_MIN_MARGIN_PX="${OD_MIN_MARGIN_PX:-0}"
   OD_MASK_GRID="${OD_MASK_GRID:-1}"
+  OD_SEED="${OD_SEED:-0}"
   AR_SIGMAS="${AR_SIGMAS:-4,8}"
   TEMPORAL_STRENGTHS="${TEMPORAL_STRENGTHS:-0,0.5}"
   BOOTSTRAP="${BOOTSTRAP:-1000}"
@@ -39,6 +40,7 @@ else
   OD_POST_MIN_QP="${OD_POST_MIN_QP:-40}"
   OD_MIN_MARGIN_PX="${OD_MIN_MARGIN_PX:-0}"
   OD_MASK_GRID="${OD_MASK_GRID:-1}"
+  OD_SEED="${OD_SEED:-0}"
   AR_SIGMAS="${AR_SIGMAS:-4}"
   TEMPORAL_STRENGTHS="${TEMPORAL_STRENGTHS:-0.25}"
   BOOTSTRAP="${BOOTSTRAP:-0}"
@@ -127,7 +129,7 @@ if [ "$RUN_OD" = "1" ]; then
     --feather "$OD_FEATHER" --roi-sigmas "$OD_ROI_SIGMAS" \
     --post-sigmas "$OD_POST_SIGMAS" --post-min-qp "$OD_POST_MIN_QP" \
     --min-margin-px "$OD_MIN_MARGIN_PX" --mask-grid "$OD_MASK_GRID" \
-    --bootstrap "$BOOTSTRAP" \
+    --bootstrap "$BOOTSTRAP" --seed "$OD_SEED" \
     --out "$OUT/od_background_suppression" 2>&1 | tee "$OUT/od_background_suppression.log"
   echo "[stage] OD background-suppression complete"
 fi

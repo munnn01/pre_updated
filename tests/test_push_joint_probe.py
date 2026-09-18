@@ -55,6 +55,7 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         od_post_min_qp=40,
         od_min_margin_px=8,
         od_mask_grid=16,
+        od_seed=20260918,
         qps="30,35,40,45,50",
         bootstrap=1000,
     )
@@ -68,6 +69,8 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     assert 'OD_POST_MIN_QP="40"' in cell
     assert 'OD_MIN_MARGIN_PX="8"' in cell
     assert 'OD_MASK_GRID="16"' in cell
+    assert 'OD_SEED="20260918"' in cell
+    assert '--seed "$OD_SEED"' in cell
     assert 'QPS="30,35,40,45,50"' in cell
     assert 'BOOTSTRAP="1000"' in cell
     assert 'if [ "$RUN_AR" = "1" ]; then\n  python scripts/build_train_index.py' in cell
@@ -85,6 +88,7 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         ({"od_post_min_qp": -1}, "od_post_min_qp"),
         ({"od_min_margin_px": -1}, "od_min_margin_px"),
         ({"od_mask_grid": 0}, "od_mask_grid"),
+        ({"od_seed": -1}, "od_seed"),
         ({"qps": "30;45"}, "qps"),
         ({"bootstrap": -1}, "bootstrap"),
     ],

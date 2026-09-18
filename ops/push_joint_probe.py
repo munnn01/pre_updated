@@ -39,6 +39,7 @@ def render_cell(
     od_post_min_qp: int | None = None,
     od_min_margin_px: float | None = None,
     od_mask_grid: int | None = None,
+    od_seed: int | None = None,
     qps: str | None = None,
     bootstrap: int | None = None,
 ) -> str:
@@ -97,6 +98,14 @@ def render_cell(
         shell = re.sub(
             r'OD_MASK_GRID="\$\{OD_MASK_GRID:-\d+\}"',
             f'OD_MASK_GRID="{od_mask_grid}"',
+            shell,
+        )
+    if od_seed is not None:
+        if od_seed < 0:
+            raise ValueError("od_seed must be non-negative")
+        shell = re.sub(
+            r'OD_SEED="\$\{OD_SEED:-\d+\}"',
+            f'OD_SEED="{od_seed}"',
             shell,
         )
     if qps is not None:
@@ -186,6 +195,8 @@ def main() -> None:
     parser.add_argument("--od-post-min-qp", type=int, default=None)
     parser.add_argument("--od-min-margin-px", type=float, default=None)
     parser.add_argument("--od-mask-grid", type=int, default=None)
+    parser.add_argument("--od-seed", type=int, default=None,
+                        help="deterministic COCO shuffle seed")
     parser.add_argument("--qps", default=None,
                         help="override the profile's comma-separated QP grid")
     parser.add_argument("--bootstrap", type=int, default=None,
@@ -221,6 +232,7 @@ def main() -> None:
             od_post_min_qp=args.od_post_min_qp,
             od_min_margin_px=args.od_min_margin_px,
             od_mask_grid=args.od_mask_grid,
+            od_seed=args.od_seed,
             qps=args.qps,
             bootstrap=args.bootstrap,
         ))),
