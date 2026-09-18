@@ -9,6 +9,7 @@ detector-accuracy change to the codec instead of to the mask.
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,6 +18,7 @@ from src.models.mask_suppress import (  # noqa: E402
     dual_region_suppress,
     gaussian_filter,
     mask_from_detections,
+    motion_preserving_gaussian,
     protect_mask,
     suppress,
 )
@@ -111,3 +113,33 @@ def test_mask_from_detections_matches_manual_call():
     a = mask_from_detections(det, 64, 0.5, 0.15)
     b = protect_mask(det["boxes"], det["scores"], det["labels"], 64, 0.5, 0.15)
     assert torch.equal(a, b)
+
+
+def test_motion_filter_blurs_static_pixels_and_preserves_motion_core():
+    base = torch.rand(1, 3, 1, 24, 24)
+    static = base.repeat(1, 1, 4, 1, 1)
+    static_out, static_mask = motion_preserving_gaussian(
+        static, 1.0, motion_quantile=0.75, dilation=0, feather=0
+    )
+    assert static_mask.sum() == 0
+    assert not torch.allclose(static_out, static)
+
+    moving = static.clone()
+    moving[:, :, 2, 8:16, 8:16] = 1.0 - moving[:, :, 2, 8:16, 8:16]
+    out, mask = motion_preserving_gaussian(
+        moving, 1.0, motion_quantile=0.75, dilation=1, feather=1
+    )
+    assert out.shape == moving.shape
+    assert mask.shape == (1, 1, 4, 24, 24)
+    protected = mask.expand_as(moving) == 1
+    assert protected.any()
+    assert torch.equal(out[protected], moving[protected])
+
+
+def test_motion_filter_rejects_invalid_parameters():
+    x = torch.rand(1, 3, 4, 16, 16)
+    for quantile in (0.0, 1.0):
+        with pytest.raises(ValueError, match="motion_quantile"):
+            motion_preserving_gaussian(x, 1.0, motion_quantile=quantile)
+    with pytest.raises(ValueError, match="sigma"):
+        motion_preserving_gaussian(x, 0.0)

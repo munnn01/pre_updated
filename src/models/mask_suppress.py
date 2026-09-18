@@ -97,6 +97,77 @@ def gaussian_filter(x: torch.Tensor, sigma: float) -> torch.Tensor:
     return blur.reshape(b, t, c, h, w).permute(0, 2, 1, 3, 4)
 
 
+def motion_preserving_gaussian(
+    x: torch.Tensor,
+    sigma: float,
+    motion_quantile: float = 0.75,
+    dilation: int = 2,
+    feather: int = 2,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Blur temporally static pixels while preserving motion-bearing regions.
+
+    This is a decoder-only, zero-bit AR post-filter.  Motion is estimated from
+    adjacent decoded frames, so no detector, optical-flow model, or side
+    information is required.  The highest-motion pixels are protected exactly;
+    spatial dilation retains action context and a soft outer band avoids a hard
+    compositing edge.
+
+    Returns ``(filtered, protection_mask)`` where the mask has shape
+    ``[B,1,T,H,W]`` and values in ``[0,1]``.
+    """
+    if x.ndim != 5:
+        raise ValueError(f"expected [B,C,T,H,W], got {tuple(x.shape)}")
+    if sigma <= 0:
+        raise ValueError("sigma must be positive")
+    if not 0.0 < motion_quantile < 1.0:
+        raise ValueError("motion_quantile must be between zero and one")
+    if int(dilation) != dilation or dilation < 0:
+        raise ValueError("dilation must be a non-negative integer")
+    if int(feather) != feather or feather < 0:
+        raise ValueError("feather must be a non-negative integer")
+
+    dilation = int(dilation)
+    feather = int(feather)
+    b, _, t, _, _ = x.shape
+    if t < 2:
+        mask = torch.zeros(
+            (b, 1, t, x.shape[-2], x.shape[-1]), dtype=x.dtype, device=x.device
+        )
+    else:
+        delta = (x[:, :, 1:] - x[:, :, :-1]).abs().mean(dim=1, keepdim=True)
+        motion = torch.zeros(
+            (b, 1, t, x.shape[-2], x.shape[-1]), dtype=x.dtype, device=x.device
+        )
+        motion[:, :, :-1] = delta
+        motion[:, :, 1:] = torch.maximum(motion[:, :, 1:], delta)
+        thresholds = torch.quantile(
+            motion.float().flatten(1), motion_quantile, dim=1, keepdim=True
+        ).to(dtype=x.dtype).view(b, 1, 1, 1, 1)
+        # Strict comparison makes a truly static clip select no motion pixels.
+        mask = (motion > thresholds).to(dtype=x.dtype)
+
+    if dilation:
+        radius = dilation
+        mask = F.max_pool3d(
+            mask,
+            kernel_size=(3, 2 * radius + 1, 2 * radius + 1),
+            stride=1,
+            padding=(1, radius, radius),
+        )
+    if feather:
+        radius = feather
+        soft = F.avg_pool3d(
+            mask,
+            kernel_size=(1, 2 * radius + 1, 2 * radius + 1),
+            stride=1,
+            padding=(0, radius, radius),
+        )
+        mask = torch.maximum(mask, soft).clamp_(0.0, 1.0)
+
+    blurred = gaussian_filter(x, sigma)
+    return x * mask + blurred * (1.0 - mask), mask
+
+
 def dual_region_suppress(
     x: torch.Tensor,
     mask: torch.Tensor,
@@ -132,6 +203,7 @@ __all__ = [
     "dual_region_suppress",
     "gaussian_filter",
     "mask_from_detections",
+    "motion_preserving_gaussian",
     "protect_mask",
     "suppress",
 ]

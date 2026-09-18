@@ -30,6 +30,7 @@ OD_BACKBONES = {
     "retinanet_resnet50_fpn_v2",
     "fcos_resnet50_fpn",
 }
+AR_BACKBONES = {"r3d_18", "mc3_18", "r2plus1d_18"}
 
 
 def render_cell(
@@ -52,8 +53,14 @@ def render_cell(
     od_mask_backbone: str | None = None,
     od_eval_backbone: str | None = None,
     ar_probe: str | None = None,
+    ar_split: str | None = None,
+    ar_backbone: str | None = None,
     ar_post_sigmas: str | None = None,
     ar_post_min_qp: int | None = None,
+    ar_motion_quantiles: str | None = None,
+    ar_motion_sigma: float | None = None,
+    ar_motion_dilation: int | None = None,
+    ar_motion_feather: int | None = None,
     qps: str | None = None,
     bootstrap: int | None = None,
 ) -> str:
@@ -154,11 +161,27 @@ def render_cell(
                 shell,
             )
     if ar_probe is not None:
-        if ar_probe not in {"tubes", "post"}:
-            raise ValueError("ar_probe must be tubes or post")
+        if ar_probe not in {"tubes", "post", "motion"}:
+            raise ValueError("ar_probe must be tubes, post, or motion")
         shell = re.sub(
             r'AR_PROBE="\$\{AR_PROBE:-[^}]+\}"',
             f'AR_PROBE="{ar_probe}"',
+            shell,
+        )
+    if ar_split is not None:
+        if ar_split not in {"train", "val", "test"}:
+            raise ValueError("ar_split must be train, val, or test")
+        shell = re.sub(
+            r'AR_SPLIT="\$\{AR_SPLIT:-[^}]+\}"',
+            f'AR_SPLIT="{ar_split}"',
+            shell,
+        )
+    if ar_backbone is not None:
+        if ar_backbone not in AR_BACKBONES:
+            raise ValueError("ar_backbone is not supported")
+        shell = re.sub(
+            r'AR_BACKBONE="\$\{AR_BACKBONE:-[^}]+\}"',
+            f'AR_BACKBONE="{ar_backbone}"',
             shell,
         )
     if ar_post_sigmas is not None:
@@ -177,6 +200,45 @@ def render_cell(
             f'AR_POST_MIN_QP="{ar_post_min_qp}"',
             shell,
         )
+    if ar_motion_quantiles is not None:
+        try:
+            quantiles = [
+                float(value) for value in ar_motion_quantiles.split(",") if value
+            ]
+        except ValueError as exc:
+            raise ValueError("ar_motion_quantiles must be numeric") from exc
+        if (
+            not quantiles
+            or len(quantiles) != len(set(quantiles))
+            or any(not 0.0 < value < 1.0 for value in quantiles)
+        ):
+            raise ValueError("ar_motion_quantiles must be unique values in (0,1)")
+        normalized = ",".join(f"{value:g}" for value in quantiles)
+        shell = re.sub(
+            r'AR_MOTION_QUANTILES="\$\{AR_MOTION_QUANTILES:-[^}]+\}"',
+            f'AR_MOTION_QUANTILES="{normalized}"',
+            shell,
+        )
+    if ar_motion_sigma is not None:
+        if ar_motion_sigma <= 0:
+            raise ValueError("ar_motion_sigma must be positive")
+        shell = re.sub(
+            r'AR_MOTION_SIGMA="\$\{AR_MOTION_SIGMA:-[^}]+\}"',
+            f'AR_MOTION_SIGMA="{ar_motion_sigma:g}"',
+            shell,
+        )
+    for value, argument, variable in (
+        (ar_motion_dilation, "ar_motion_dilation", "AR_MOTION_DILATION"),
+        (ar_motion_feather, "ar_motion_feather", "AR_MOTION_FEATHER"),
+    ):
+        if value is not None:
+            if value < 0:
+                raise ValueError(f"{argument} must be non-negative")
+            shell = re.sub(
+                rf'{variable}="\$\{{{variable}:-\d+\}}"',
+                f'{variable}="{value}"',
+                shell,
+            )
     if qps is not None:
         if not qps or any(c not in "0123456789," for c in qps):
             raise ValueError("qps must be a comma-separated integer grid")
@@ -273,9 +335,15 @@ def main() -> None:
                         help="comma-separated OD codecs: h264,h265")
     parser.add_argument("--od-mask-backbone", choices=sorted(OD_BACKBONES), default=None)
     parser.add_argument("--od-eval-backbone", choices=sorted(OD_BACKBONES), default=None)
-    parser.add_argument("--ar-probe", choices=["tubes", "post"], default=None)
+    parser.add_argument("--ar-probe", choices=["tubes", "post", "motion"], default=None)
+    parser.add_argument("--ar-split", choices=["train", "val", "test"], default=None)
+    parser.add_argument("--ar-backbone", choices=sorted(AR_BACKBONES), default=None)
     parser.add_argument("--ar-post-sigmas", default=None)
     parser.add_argument("--ar-post-min-qp", type=int, default=None)
+    parser.add_argument("--ar-motion-quantiles", default=None)
+    parser.add_argument("--ar-motion-sigma", type=float, default=None)
+    parser.add_argument("--ar-motion-dilation", type=int, default=None)
+    parser.add_argument("--ar-motion-feather", type=int, default=None)
     parser.add_argument("--qps", default=None,
                         help="override the profile's comma-separated QP grid")
     parser.add_argument("--bootstrap", type=int, default=None,
@@ -318,8 +386,14 @@ def main() -> None:
             od_mask_backbone=args.od_mask_backbone,
             od_eval_backbone=args.od_eval_backbone,
             ar_probe=args.ar_probe,
+            ar_split=args.ar_split,
+            ar_backbone=args.ar_backbone,
             ar_post_sigmas=args.ar_post_sigmas,
             ar_post_min_qp=args.ar_post_min_qp,
+            ar_motion_quantiles=args.ar_motion_quantiles,
+            ar_motion_sigma=args.ar_motion_sigma,
+            ar_motion_dilation=args.ar_motion_dilation,
+            ar_motion_feather=args.ar_motion_feather,
             qps=args.qps,
             bootstrap=args.bootstrap,
         ))),

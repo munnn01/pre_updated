@@ -31,8 +31,14 @@ if [ "$PROFILE" = "confirmatory" ]; then
   AR_SIGMAS="${AR_SIGMAS:-4,8}"
   TEMPORAL_STRENGTHS="${TEMPORAL_STRENGTHS:-0,0.5}"
   AR_PROBE="${AR_PROBE:-tubes}"
+  AR_SPLIT="${AR_SPLIT:-test}"
+  AR_BACKBONE="${AR_BACKBONE:-r3d_18}"
   AR_POST_SIGMAS="${AR_POST_SIGMAS:-1}"
   AR_POST_MIN_QP="${AR_POST_MIN_QP:-45}"
+  AR_MOTION_QUANTILES="${AR_MOTION_QUANTILES:-0.5,0.75}"
+  AR_MOTION_SIGMA="${AR_MOTION_SIGMA:-1}"
+  AR_MOTION_DILATION="${AR_MOTION_DILATION:-2}"
+  AR_MOTION_FEATHER="${AR_MOTION_FEATHER:-2}"
   BOOTSTRAP="${BOOTSTRAP:-1000}"
 else
   N_OD="${N_OD:-50}"
@@ -55,8 +61,14 @@ else
   AR_SIGMAS="${AR_SIGMAS:-4}"
   TEMPORAL_STRENGTHS="${TEMPORAL_STRENGTHS:-0.25}"
   AR_PROBE="${AR_PROBE:-tubes}"
+  AR_SPLIT="${AR_SPLIT:-test}"
+  AR_BACKBONE="${AR_BACKBONE:-r3d_18}"
   AR_POST_SIGMAS="${AR_POST_SIGMAS:-1}"
   AR_POST_MIN_QP="${AR_POST_MIN_QP:-45}"
+  AR_MOTION_QUANTILES="${AR_MOTION_QUANTILES:-0.5,0.75}"
+  AR_MOTION_SIGMA="${AR_MOTION_SIGMA:-1}"
+  AR_MOTION_DILATION="${AR_MOTION_DILATION:-2}"
+  AR_MOTION_FEATHER="${AR_MOTION_FEATHER:-2}"
   BOOTSTRAP="${BOOTSTRAP:-0}"
 fi
 
@@ -127,19 +139,31 @@ if [ "$RUN_AR" = "1" ]; then
   if [ "$AR_PROBE" = "post" ]; then
     echo "[stage] AR decoder-POST start"
     python ops/probe_action_post.py \
-      --index "$INDEX" --split test --n-clips "$N_AR" \
+      --index "$INDEX" --split "$AR_SPLIT" --n-clips "$N_AR" \
       --num-frames 16 --size 128 --qps "$QPS" \
       --post-sigmas "$AR_POST_SIGMAS" --post-min-qp "$AR_POST_MIN_QP" \
-      --ar-backbone r3d_18 --out "$OUT/ar_decoder_post" \
+      --ar-backbone "$AR_BACKBONE" --out "$OUT/ar_decoder_post" \
       2>&1 | tee "$OUT/ar_decoder_post.log"
     echo "[stage] AR decoder-POST complete"
+  elif [ "$AR_PROBE" = "motion" ]; then
+    echo "[stage] AR motion-preserving POST start"
+    python ops/probe_action_motion_post.py \
+      --index "$INDEX" --split "$AR_SPLIT" --n-clips "$N_AR" \
+      --num-frames 16 --size 128 --qps "$QPS" \
+      --motion-quantiles "$AR_MOTION_QUANTILES" \
+      --spatial-sigma "$AR_MOTION_SIGMA" --post-min-qp "$AR_POST_MIN_QP" \
+      --motion-dilation "$AR_MOTION_DILATION" \
+      --motion-feather "$AR_MOTION_FEATHER" \
+      --ar-backbone "$AR_BACKBONE" --out "$OUT/ar_motion_post" \
+      2>&1 | tee "$OUT/ar_motion_post.log"
+    echo "[stage] AR motion-preserving POST complete"
   else
     echo "[stage] AR importance-tube start"
     python ops/probe_action_tubes.py \
-      --index "$INDEX" --split test --n-clips "$N_AR" \
+      --index "$INDEX" --split "$AR_SPLIT" --n-clips "$N_AR" \
       --num-frames 16 --size 128 --qps "$QPS" \
       --sigmas "$AR_SIGMAS" --temporal-strengths "$TEMPORAL_STRENGTHS" \
-      --score 0.2 --dilate 0.30 --feather 8 --ar-backbone r3d_18 \
+      --score 0.2 --dilate 0.30 --feather 8 --ar-backbone "$AR_BACKBONE" \
       --out "$OUT/ar_importance_tubes" 2>&1 | tee "$OUT/ar_importance_tubes.log"
     echo "[stage] AR importance-tube complete"
   fi

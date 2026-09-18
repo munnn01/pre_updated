@@ -1,7 +1,6 @@
 import json
 
 import pytest
-
 from ops.push_joint_probe import (
     DEFAULT_DATASETS,
     kaggle_command,
@@ -19,6 +18,7 @@ def test_joint_cell_pins_ref_and_runs_both_probes():
     assert 'PROFILE="quick"' in cell
     assert "ops/probe_background_suppression.py" in cell
     assert "ops/probe_action_tubes.py" in cell
+    assert "ops/probe_action_motion_post.py" in cell
     assert cell.index("ops/probe_action_tubes.py") < cell.index(
         "ops/probe_background_suppression.py"
     )
@@ -63,8 +63,14 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         od_mask_backbone="fasterrcnn_resnet50_fpn",
         od_eval_backbone="fcos_resnet50_fpn",
         ar_probe="post",
+        ar_split="val",
+        ar_backbone="mc3_18",
         ar_post_sigmas="1,2",
         ar_post_min_qp=45,
+        ar_motion_quantiles="0.5,0.75",
+        ar_motion_sigma=1.0,
+        ar_motion_dilation=3,
+        ar_motion_feather=1,
         qps="30,35,40,45,50",
         bootstrap=1000,
     )
@@ -85,8 +91,14 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     assert 'OD_MASK_BACKBONE="fasterrcnn_resnet50_fpn"' in cell
     assert 'OD_EVAL_BACKBONE="fcos_resnet50_fpn"' in cell
     assert 'AR_PROBE="post"' in cell
+    assert 'AR_SPLIT="val"' in cell
+    assert 'AR_BACKBONE="mc3_18"' in cell
     assert 'AR_POST_SIGMAS="1,2"' in cell
     assert 'AR_POST_MIN_QP="45"' in cell
+    assert 'AR_MOTION_QUANTILES="0.5,0.75"' in cell
+    assert 'AR_MOTION_SIGMA="1"' in cell
+    assert 'AR_MOTION_DILATION="3"' in cell
+    assert 'AR_MOTION_FEATHER="1"' in cell
     assert '--seed "$OD_SEED"' in cell
     assert '--codecs "$OD_CODECS"' in cell
     assert '--mask-backbone "$OD_MASK_BACKBONE"' in cell
@@ -117,8 +129,15 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         ({"od_mask_backbone": "yolo"}, "od_mask_backbone"),
         ({"od_eval_backbone": "yolo"}, "od_eval_backbone"),
         ({"ar_probe": "unknown"}, "ar_probe"),
+        ({"ar_split": "holdout"}, "ar_split"),
+        ({"ar_backbone": "slowfast"}, "ar_backbone"),
         ({"ar_post_sigmas": "1;rm"}, "ar_post_sigmas"),
         ({"ar_post_min_qp": -1}, "ar_post_min_qp"),
+        ({"ar_motion_quantiles": "0,0.5"}, "ar_motion_quantiles"),
+        ({"ar_motion_quantiles": "0.5,0.5"}, "ar_motion_quantiles"),
+        ({"ar_motion_sigma": 0}, "ar_motion_sigma"),
+        ({"ar_motion_dilation": -1}, "ar_motion_dilation"),
+        ({"ar_motion_feather": -1}, "ar_motion_feather"),
         ({"qps": "30;45"}, "qps"),
         ({"bootstrap": -1}, "bootstrap"),
     ],
