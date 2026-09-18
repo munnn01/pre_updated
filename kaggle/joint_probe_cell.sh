@@ -18,6 +18,11 @@ if [ "$PROFILE" = "confirmatory" ]; then
   OD_SCORE="${OD_SCORE:-0.5}"
   OD_DILATE="${OD_DILATE:-0.15}"
   OD_FEATHER="${OD_FEATHER:-4}"
+  OD_ROI_SIGMAS="${OD_ROI_SIGMAS:-0}"
+  OD_POST_SIGMAS="${OD_POST_SIGMAS:-0}"
+  OD_POST_MIN_QP="${OD_POST_MIN_QP:-40}"
+  OD_MIN_MARGIN_PX="${OD_MIN_MARGIN_PX:-0}"
+  OD_MASK_GRID="${OD_MASK_GRID:-1}"
   AR_SIGMAS="${AR_SIGMAS:-4,8}"
   TEMPORAL_STRENGTHS="${TEMPORAL_STRENGTHS:-0,0.5}"
   BOOTSTRAP="${BOOTSTRAP:-1000}"
@@ -29,6 +34,11 @@ else
   OD_SCORE="${OD_SCORE:-0.2}"
   OD_DILATE="${OD_DILATE:-0.30}"
   OD_FEATHER="${OD_FEATHER:-8}"
+  OD_ROI_SIGMAS="${OD_ROI_SIGMAS:-0}"
+  OD_POST_SIGMAS="${OD_POST_SIGMAS:-0}"
+  OD_POST_MIN_QP="${OD_POST_MIN_QP:-40}"
+  OD_MIN_MARGIN_PX="${OD_MIN_MARGIN_PX:-0}"
+  OD_MASK_GRID="${OD_MASK_GRID:-1}"
   AR_SIGMAS="${AR_SIGMAS:-4}"
   TEMPORAL_STRENGTHS="${TEMPORAL_STRENGTHS:-0.25}"
   BOOTSTRAP="${BOOTSTRAP:-0}"
@@ -101,7 +111,10 @@ if [ "$RUN_OD" = "1" ]; then
     --images "$COCO_VAL" --ann "$COCO_ANN" \
     --n-images "$N_OD" --size 320 --qps "$QPS" \
     --sigmas "$OD_SIGMAS" --score "$OD_SCORE" --dilate "$OD_DILATE" \
-    --feather "$OD_FEATHER" --bootstrap "$BOOTSTRAP" \
+    --feather "$OD_FEATHER" --roi-sigmas "$OD_ROI_SIGMAS" \
+    --post-sigmas "$OD_POST_SIGMAS" --post-min-qp "$OD_POST_MIN_QP" \
+    --min-margin-px "$OD_MIN_MARGIN_PX" --mask-grid "$OD_MASK_GRID" \
+    --bootstrap "$BOOTSTRAP" \
     --out "$OUT/od_background_suppression" 2>&1 | tee "$OUT/od_background_suppression.log"
   echo "[stage] OD background-suppression complete"
 fi

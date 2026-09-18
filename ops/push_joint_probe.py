@@ -34,6 +34,11 @@ def render_cell(
     run_od: bool = True,
     n_od: int | None = None,
     od_sigmas: str | None = None,
+    od_roi_sigmas: str | None = None,
+    od_post_sigmas: str | None = None,
+    od_post_min_qp: int | None = None,
+    od_min_margin_px: float | None = None,
+    od_mask_grid: int | None = None,
     qps: str | None = None,
     bootstrap: int | None = None,
 ) -> str:
@@ -56,6 +61,42 @@ def render_cell(
         shell = re.sub(
             r'OD_SIGMAS="\$\{OD_SIGMAS:-[^}]+\}"',
             f'OD_SIGMAS="{od_sigmas}"',
+            shell,
+        )
+    for value, argument, variable in (
+        (od_roi_sigmas, "od_roi_sigmas", "OD_ROI_SIGMAS"),
+        (od_post_sigmas, "od_post_sigmas", "OD_POST_SIGMAS"),
+    ):
+        if value is not None:
+            if not value or any(c not in "0123456789.," for c in value):
+                raise ValueError(f"{argument} must be a comma-separated numeric grid")
+            shell = re.sub(
+                rf'{variable}="\$\{{{variable}:-[^}}]+\}}"',
+                f'{variable}="{value}"',
+                shell,
+            )
+    if od_post_min_qp is not None:
+        if od_post_min_qp < 0:
+            raise ValueError("od_post_min_qp must be non-negative")
+        shell = re.sub(
+            r'OD_POST_MIN_QP="\$\{OD_POST_MIN_QP:-\d+\}"',
+            f'OD_POST_MIN_QP="{od_post_min_qp}"',
+            shell,
+        )
+    if od_min_margin_px is not None:
+        if od_min_margin_px < 0:
+            raise ValueError("od_min_margin_px must be non-negative")
+        shell = re.sub(
+            r'OD_MIN_MARGIN_PX="\$\{OD_MIN_MARGIN_PX:-[^}]+\}"',
+            f'OD_MIN_MARGIN_PX="{od_min_margin_px:g}"',
+            shell,
+        )
+    if od_mask_grid is not None:
+        if od_mask_grid <= 0:
+            raise ValueError("od_mask_grid must be positive")
+        shell = re.sub(
+            r'OD_MASK_GRID="\$\{OD_MASK_GRID:-\d+\}"',
+            f'OD_MASK_GRID="{od_mask_grid}"',
             shell,
         )
     if qps is not None:
@@ -138,6 +179,13 @@ def main() -> None:
                         help="override the profile's COCO image count")
     parser.add_argument("--od-sigmas", default=None,
                         help="override the profile's comma-separated OD sigma grid")
+    parser.add_argument("--od-roi-sigmas", default=None,
+                        help="comma-separated Gaussian sigmas inside OD ROI")
+    parser.add_argument("--od-post-sigmas", default=None,
+                        help="comma-separated zero-bit post-decode sigmas")
+    parser.add_argument("--od-post-min-qp", type=int, default=None)
+    parser.add_argument("--od-min-margin-px", type=float, default=None)
+    parser.add_argument("--od-mask-grid", type=int, default=None)
     parser.add_argument("--qps", default=None,
                         help="override the profile's comma-separated QP grid")
     parser.add_argument("--bootstrap", type=int, default=None,
@@ -168,6 +216,11 @@ def main() -> None:
             run_od=not args.skip_od,
             n_od=args.n_od,
             od_sigmas=args.od_sigmas,
+            od_roi_sigmas=args.od_roi_sigmas,
+            od_post_sigmas=args.od_post_sigmas,
+            od_post_min_qp=args.od_post_min_qp,
+            od_min_margin_px=args.od_min_margin_px,
+            od_mask_grid=args.od_mask_grid,
             qps=args.qps,
             bootstrap=args.bootstrap,
         ))),

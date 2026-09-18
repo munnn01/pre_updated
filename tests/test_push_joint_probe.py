@@ -50,6 +50,11 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         run_od=True,
         n_od=200,
         od_sigmas="4",
+        od_roi_sigmas="0,1",
+        od_post_sigmas="0,1",
+        od_post_min_qp=40,
+        od_min_margin_px=8,
+        od_mask_grid=16,
         qps="30,35,40,45,50",
         bootstrap=1000,
     )
@@ -58,6 +63,11 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     assert 'RUN_OD="1"' in cell
     assert 'N_OD="200"' in cell
     assert 'OD_SIGMAS="4"' in cell
+    assert 'OD_ROI_SIGMAS="0,1"' in cell
+    assert 'OD_POST_SIGMAS="0,1"' in cell
+    assert 'OD_POST_MIN_QP="40"' in cell
+    assert 'OD_MIN_MARGIN_PX="8"' in cell
+    assert 'OD_MASK_GRID="16"' in cell
     assert 'QPS="30,35,40,45,50"' in cell
     assert 'BOOTSTRAP="1000"' in cell
 
@@ -67,6 +77,11 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     [
         ({"n_od": 0}, "n_od"),
         ({"od_sigmas": "4;rm"}, "od_sigmas"),
+        ({"od_roi_sigmas": "0;rm"}, "od_roi_sigmas"),
+        ({"od_post_sigmas": "1;rm"}, "od_post_sigmas"),
+        ({"od_post_min_qp": -1}, "od_post_min_qp"),
+        ({"od_min_margin_px": -1}, "od_min_margin_px"),
+        ({"od_mask_grid": 0}, "od_mask_grid"),
         ({"qps": "30;45"}, "qps"),
         ({"bootstrap": -1}, "bootstrap"),
     ],

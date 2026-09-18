@@ -11,9 +11,11 @@ therefore cannot overfit the proxy codec or add structure the detector dislikes.
 
 Design: run the frozen detector on the SOURCE image (the encoder has the image
 and may analyse it freely; the decoder needs no side information), dilate its
-boxes into a protection mask, and heavily blur everything OUTSIDE the mask. The
-object regions are passed through untouched. That is the whole transform — no
-parameters, no training, nothing to select.
+boxes into a protection mask, and heavily blur everything OUTSIDE the mask.  The
+dual-region extension can mildly denoise the ROI as well.  A second, zero-bit
+Gaussian filter can be enabled after decoding only at high QP.  The historical
+identity-ROI transform remains the default and every extension is an explicit
+ablation arm.
 
 Arms: anchor (codec(x)) vs masked (codec(suppress(x))) on the mAP axis, with
 several blur strengths, both codecs, the project's QP grid. Per-image records are
@@ -33,7 +35,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -41,7 +42,11 @@ from src.codecs.standard import StandardCodec, ffmpeg_available  # noqa: E402
 from src.metrics.bd_rate import bd_rate  # noqa: E402
 from src.metrics.detection import paired_bootstrap_detection_bd  # noqa: E402
 from src.models.importance_tube import feather_protection  # noqa: E402
-from src.models.mask_suppress import protect_mask, suppress  # noqa: E402
+from src.models.mask_suppress import (  # noqa: E402
+    dual_region_suppress,
+    gaussian_filter,
+    protect_mask,
+)
 from probe_detection import (  # noqa: E402  (ops/ is on sys.path when run from repo root)
     Detector,
     _coco_box,
@@ -49,6 +54,39 @@ from probe_detection import (  # noqa: E402  (ops/ is on sys.path when run from 
     load_coco,
     scaled_gt,
 )
+
+
+def _float_grid(raw: str, name: str, *, positive: bool = False) -> list[float]:
+    values = [float(x) for x in raw.split(",") if x.strip()]
+    if not values:
+        raise ValueError(f"{name} must not be empty")
+    if positive and any(x <= 0 for x in values):
+        raise ValueError(f"{name} values must be positive")
+    if not positive and any(x < 0 for x in values):
+        raise ValueError(f"{name} values must be non-negative")
+    return list(dict.fromkeys(values))
+
+
+def _base_arm(background_sigma: float, roi_sigma: float) -> str:
+    name = f"blur{background_sigma:g}"
+    if roi_sigma > 0:
+        name += f"_roi{roi_sigma:g}"
+    return name
+
+
+def _post_arm(base: str, post_sigma: float, post_min_qp: int) -> str:
+    return f"{base}_post{post_sigma:g}q{post_min_qp}"
+
+
+def _predictions(det_out: dict, detector: Detector, image_id: int) -> list[dict]:
+    keep = det_out["scores"] >= detector.score_thresh
+    return [
+        {"image_id": image_id, "category_id": int(label), "bbox": _coco_box(box),
+         "score": float(score)}
+        for box, score, label in zip(
+            det_out["boxes"][keep], det_out["scores"][keep], det_out["labels"][keep]
+        )
+    ]
 
 
 def main() -> None:
@@ -59,9 +97,19 @@ def main() -> None:
     ap.add_argument("--size", type=int, default=320)
     ap.add_argument("--qps", default="30,35,40,45,50")
     ap.add_argument("--sigmas", default="4,8,16")
+    ap.add_argument("--roi-sigmas", default="0",
+                    help="comma-separated Gaussian sigmas inside protected ROI")
+    ap.add_argument("--post-sigmas", default="0",
+                    help="comma-separated zero-bit Gaussian sigmas after decode")
+    ap.add_argument("--post-min-qp", type=int, default=40,
+                    help="post-filter is identity below this QP")
     ap.add_argument("--score", type=float, default=0.5)
     ap.add_argument("--eval-score", type=float, default=0.05)
     ap.add_argument("--dilate", type=float, default=0.15)
+    ap.add_argument("--min-margin-px", type=float, default=0.0,
+                    help="minimum context halo per box side before block alignment")
+    ap.add_argument("--mask-grid", type=int, default=1,
+                    help="expand protected boxes to this pixel grid (1 disables)")
     ap.add_argument("--feather", type=int, default=0,
                     help="soft protection band in pixels around the exact-identity boxes")
     ap.add_argument("--mask-backbone", default="fasterrcnn_mobilenet_v3_large_fpn",
@@ -82,8 +130,15 @@ def main() -> None:
         print("[bg] ffmpeg missing -> abort")
         raise SystemExit(1)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    sigmas = [float(s) for s in a.sigmas.split(",")]
+    sigmas = _float_grid(a.sigmas, "sigmas", positive=True)
+    roi_sigmas = _float_grid(a.roi_sigmas, "roi_sigmas")
+    post_sigmas = _float_grid(a.post_sigmas, "post_sigmas")
+    positive_post_sigmas = [s for s in post_sigmas if s > 0]
     qps = [int(q) for q in a.qps.split(",")]
+    if a.min_margin_px < 0:
+        raise ValueError("min_margin_px must be non-negative")
+    if a.mask_grid <= 0:
+        raise ValueError("mask_grid must be positive")
 
     if a.mask_backbone == a.eval_backbone and not a.allow_same_detector:
         raise ValueError(
@@ -95,7 +150,8 @@ def main() -> None:
     items = [(i, t.to(device), hw, an) for i, t, hw, an in items]
     gt_by_id = {i: scaled_gt(an, a.size, hw) for i, _, hw, an in items}
     ids = [i for i, _, _, _ in items]
-    print(f"[bg] {len(items)} images at {a.size}px, sigmas={sigmas}")
+    print(f"[bg] {len(items)} images at {a.size}px, background={sigmas}, "
+          f"roi={roi_sigmas}, post={post_sigmas}@qp>={a.post_min_qp}")
 
     mask_det = Detector(device, score_thresh=a.score, backbone=a.mask_backbone)
     print(f"[bg] mask detector={a.mask_backbone}; held-out evaluator={a.eval_backbone}")
@@ -109,7 +165,7 @@ def main() -> None:
     for i, t, hw, _ in items:
         d = mask_det.predict(t)[0]
         core = protect_mask(d["boxes"], d["scores"], d["labels"], a.size,
-                            a.score, a.dilate)
+                            a.score, a.dilate, a.min_margin_px, a.mask_grid)
         core_cover.append(float(core.mean()))
         masks[i] = (feather_protection(core, a.feather).squeeze(2)
                     if a.feather else core)
@@ -124,7 +180,16 @@ def main() -> None:
           f"{np.mean(core_cover):.3f}/{cover:.3f} "
           f"(1 - this is how much of the image may be destroyed)")
 
-    arms = ["anchor"] + [f"blur{s:g}" for s in sigmas]
+    pre_specs = [("anchor", None, None)] + [
+        (_base_arm(background_sigma, roi_sigma), background_sigma, roi_sigma)
+        for background_sigma in sigmas for roi_sigma in roi_sigmas
+    ]
+    if len({name for name, _, _ in pre_specs}) != len(pre_specs):
+        raise ValueError("sigma grids produce duplicate arm names")
+    arms = []
+    for base, _, _ in pre_specs:
+        arms.append(base)
+        arms.extend(_post_arm(base, s, a.post_min_qp) for s in positive_post_sigmas)
     rec = {arm: {} for arm in arms}
     for codec_name in ("h264", "h265"):
         for qp in qps:
@@ -132,26 +197,51 @@ def main() -> None:
             for arm in arms:
                 rec[arm].setdefault((codec_name, qp), {})
             for i, t, hw, _ in items:
-                variants = {"anchor": t}
-                for s in sigmas:
-                    variants[f"blur{s:g}"] = suppress(t, masks[i], s)
-                for arm, xv in variants.items():
-                    out, bpp = sc.compress_decompress_items(xv)
-                    d = eval_det.predict(out)[0]
-                    keep = d["scores"] >= eval_det.score_thresh
-                    rec[arm][(codec_name, qp)][i] = (float(bpp[0]), [
-                        {"image_id": i, "category_id": int(l), "bbox": _coco_box(b),
-                         "score": float(s2)}
-                        for b, s2, l in zip(d["boxes"][keep], d["scores"][keep],
-                                            d["labels"][keep])])
+                encoded = []
+                for base, background_sigma, roi_sigma in pre_specs:
+                    xv = t if base == "anchor" else dual_region_suppress(
+                        t, masks[i], background_sigma=background_sigma,
+                        roi_sigma=roi_sigma,
+                    )
+                    decoded, bpp = sc.compress_decompress_items(xv)
+                    encoded.append((base, decoded, float(bpp[0])))
+
+                base_predictions = eval_det.predict(torch.cat(
+                    [decoded for _, decoded, _ in encoded], dim=0
+                ))
+                for (base, _, bpp), det_out in zip(encoded, base_predictions):
+                    preds = _predictions(det_out, eval_det, i)
+                    rec[base][(codec_name, qp)][i] = (bpp, preds)
+
+                for post_sigma in positive_post_sigmas:
+                    if qp < a.post_min_qp:
+                        for base, _, bpp in encoded:
+                            post_name = _post_arm(base, post_sigma, a.post_min_qp)
+                            rec[post_name][(codec_name, qp)][i] = (
+                                bpp, rec[base][(codec_name, qp)][i][1]
+                            )
+                        continue
+                    post_batch = torch.cat([
+                        gaussian_filter(decoded, post_sigma)
+                        for _, decoded, _ in encoded
+                    ], dim=0)
+                    post_predictions = eval_det.predict(post_batch)
+                    for (base, _, bpp), det_out in zip(encoded, post_predictions):
+                        post_name = _post_arm(base, post_sigma, a.post_min_qp)
+                        rec[post_name][(codec_name, qp)][i] = (
+                            bpp, _predictions(det_out, eval_det, i)
+                        )
             print(f"[bg] {codec_name} qp{qp} done", flush=True)
 
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {"n_images": len(items), "size": a.size, "cover": cover,
               "core_cover": float(np.mean(core_cover)), "feather": a.feather,
-              "sigmas": sigmas, "score": a.score, "eval_score": a.eval_score,
-              "dilate": a.dilate, "mask_backbone": a.mask_backbone,
+              "sigmas": sigmas, "roi_sigmas": roi_sigmas,
+              "post_sigmas": post_sigmas, "post_min_qp": a.post_min_qp,
+              "score": a.score, "eval_score": a.eval_score,
+              "dilate": a.dilate, "min_margin_px": a.min_margin_px,
+              "mask_grid": a.mask_grid, "mask_backbone": a.mask_backbone,
               "eval_backbone": a.eval_backbone, "curves": {}}
     for codec_name in ("h264", "h265"):
         curves = {}
@@ -162,7 +252,7 @@ def main() -> None:
                 rates.append(float(np.mean([v[0] for v in slot.values()])))
                 aps.append(mAP([p for v in slot.values() for p in v[1]]))
             curves[arm] = {"rate": rates, "mAP": aps}
-            print(f"[bg] {codec_name} {arm:8s} bpp={['%.4f' % r for r in rates]} "
+            print(f"[bg] {codec_name} {arm:24s} bpp={['%.4f' % r for r in rates]} "
                   f"mAP={['%.4f' % m for m in aps]}")
         for arm in arms[1:]:
             curves[arm]["bd_vs_anchor"] = bd_rate(

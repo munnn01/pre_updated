@@ -23,6 +23,13 @@ to Kinetics without training and reports BD-rate on both top-1 and target-class
 probability. A learned joint model should not be started until this probe shows
 that object tubes improve or preserve AR while reducing rate.
 
+The gate has now fired **negative** on the exploratory 20-clip probe: H.264
+`+9.80%` and H.265 `+8.57%` BD-rate on top-1.  The sample is too small for a
+claim, but the direction is bad enough that the detector-only tube must not be
+scaled as-is.  Object presence is not action evidence.  A second AR rung must
+combine actor/object masks with motion and held-out action saliency, then modify
+only low-motion, low-saliency background.
+
 ## Measurement contract
 
 1. The network producing encoder-side masks must differ from the evaluation
@@ -37,10 +44,10 @@ that object tubes improve or preserve AR while reducing rate.
 
 ## Next training rung (not claimed by this repository yet)
 
-Alternate COCO `T=1` batches and Kinetics `T=16` batches through a shared
-importance/suppression trunk. Keep small task adapters and codec-specific POST
-heads; the existing AR evidence shows that a shared POST trunk destroys useful
-codec specialization. The target objective is:
+Do not force COCO and Kinetics through one spatial transform.  Route them through
+task-specific importance adapters and codec-specific POST heads while sharing
+the codec/evaluation infrastructure.  The existing AR evidence shows that a
+shared POST trunk destroys useful codec specialization. The target objective is:
 
 ```text
 L = lambda_det * L_detection + lambda_ar * L_action + beta * rate

@@ -14,6 +14,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.models.mask_suppress import (  # noqa: E402
+    dual_region_suppress,
+    gaussian_filter,
     mask_from_detections,
     protect_mask,
     suppress,
@@ -70,6 +72,37 @@ def test_mask_follows_the_boxes_device():
     x = torch.rand(1, 3, 1, 32, 32, device=boxes.device)
     out = suppress(x, m, 4.0)
     assert out.device == x.device
+
+
+def test_mask_supports_fixed_context_halo_and_block_alignment():
+    """Small objects get real context and the expanded box follows codec blocks."""
+    boxes = torch.tensor([[11.0, 13.0, 15.0, 17.0]])
+    scores = torch.tensor([0.9])
+    labels = torch.tensor([1])
+    mask = protect_mask(
+        boxes, scores, labels, 64, score_thresh=0.5, dilate=0.0,
+        min_margin_px=5.0, grid=8,
+    )
+    # [6,8,20,22] after the halo expands outward to [0,8,24,24].
+    assert mask[:, :, 8:24, 0:24].min() == 1.0
+    assert mask[:, :, :8, :].sum() == 0
+    assert mask[:, :, 24:, :].sum() == 0
+    assert mask[:, :, :, 24:].sum() == 0
+
+
+def test_dual_region_zero_roi_matches_original_and_positive_roi_filters_core():
+    x = torch.rand(1, 3, 2, 32, 32)
+    mask = torch.zeros(1, 1, 32, 32)
+    mask[:, :, 8:24, 8:24] = 1.0
+
+    old = suppress(x, mask, sigma=4.0)
+    dual_identity = dual_region_suppress(x, mask, background_sigma=4.0, roi_sigma=0.0)
+    assert torch.equal(old, dual_identity)
+
+    dual_blur = dual_region_suppress(x, mask, background_sigma=4.0, roi_sigma=1.0)
+    core = (slice(None), slice(None), slice(None), slice(10, 22), slice(10, 22))
+    assert not torch.allclose(dual_blur[core], x[core], atol=1e-5)
+    assert torch.equal(gaussian_filter(x, 0.0), x)
 
 
 def test_mask_from_detections_matches_manual_call():
