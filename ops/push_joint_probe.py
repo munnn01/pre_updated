@@ -24,6 +24,12 @@ DEFAULT_DATASETS = (
     "awsaf49/coco-2017-dataset",
     "qktttttttttt/kineticscleaned",
 )
+OD_BACKBONES = {
+    "fasterrcnn_resnet50_fpn",
+    "fasterrcnn_mobilenet_v3_large_fpn",
+    "retinanet_resnet50_fpn_v2",
+    "fcos_resnet50_fpn",
+}
 
 
 def render_cell(
@@ -33,6 +39,8 @@ def render_cell(
     run_ar: bool = True,
     run_od: bool = True,
     n_od: int | None = None,
+    n_ar: int | None = None,
+    od_size: int | None = None,
     od_sigmas: str | None = None,
     od_roi_sigmas: str | None = None,
     od_post_sigmas: str | None = None,
@@ -41,6 +49,11 @@ def render_cell(
     od_mask_grid: int | None = None,
     od_seed: int | None = None,
     od_codecs: str | None = None,
+    od_mask_backbone: str | None = None,
+    od_eval_backbone: str | None = None,
+    ar_probe: str | None = None,
+    ar_post_sigmas: str | None = None,
+    ar_post_min_qp: int | None = None,
     qps: str | None = None,
     bootstrap: int | None = None,
 ) -> str:
@@ -57,6 +70,14 @@ def render_cell(
         if n_od <= 0:
             raise ValueError("n_od must be positive")
         shell = re.sub(r'N_OD="\$\{N_OD:-\d+\}"', f'N_OD="{n_od}"', shell)
+    if n_ar is not None:
+        if n_ar <= 0:
+            raise ValueError("n_ar must be positive")
+        shell = re.sub(r'N_AR="\$\{N_AR:-\d+\}"', f'N_AR="{n_ar}"', shell)
+    if od_size is not None:
+        if od_size <= 0:
+            raise ValueError("od_size must be positive")
+        shell = re.sub(r'OD_SIZE="\$\{OD_SIZE:-\d+\}"', f'OD_SIZE="{od_size}"', shell)
     if od_sigmas is not None:
         if not od_sigmas or any(c not in "0123456789.," for c in od_sigmas):
             raise ValueError("od_sigmas must be a comma-separated numeric grid")
@@ -118,6 +139,42 @@ def render_cell(
         shell = re.sub(
             r'OD_CODECS="\$\{OD_CODECS:-[^}]+\}"',
             f'OD_CODECS="{",".join(codecs)}"',
+            shell,
+        )
+    for value, argument, variable in (
+        (od_mask_backbone, "od_mask_backbone", "OD_MASK_BACKBONE"),
+        (od_eval_backbone, "od_eval_backbone", "OD_EVAL_BACKBONE"),
+    ):
+        if value is not None:
+            if value not in OD_BACKBONES:
+                raise ValueError(f"{argument} is not supported")
+            shell = re.sub(
+                rf'{variable}="\$\{{{variable}:-[^}}]+\}}"',
+                f'{variable}="{value}"',
+                shell,
+            )
+    if ar_probe is not None:
+        if ar_probe not in {"tubes", "post"}:
+            raise ValueError("ar_probe must be tubes or post")
+        shell = re.sub(
+            r'AR_PROBE="\$\{AR_PROBE:-[^}]+\}"',
+            f'AR_PROBE="{ar_probe}"',
+            shell,
+        )
+    if ar_post_sigmas is not None:
+        if not ar_post_sigmas or any(c not in "0123456789.," for c in ar_post_sigmas):
+            raise ValueError("ar_post_sigmas must be a comma-separated numeric grid")
+        shell = re.sub(
+            r'AR_POST_SIGMAS="\$\{AR_POST_SIGMAS:-[^}]+\}"',
+            f'AR_POST_SIGMAS="{ar_post_sigmas}"',
+            shell,
+        )
+    if ar_post_min_qp is not None:
+        if ar_post_min_qp < 0:
+            raise ValueError("ar_post_min_qp must be non-negative")
+        shell = re.sub(
+            r'AR_POST_MIN_QP="\$\{AR_POST_MIN_QP:-\d+\}"',
+            f'AR_POST_MIN_QP="{ar_post_min_qp}"',
             shell,
         )
     if qps is not None:
@@ -198,6 +255,9 @@ def main() -> None:
     parser.add_argument("--skip-od", action="store_true")
     parser.add_argument("--n-od", type=int, default=None,
                         help="override the profile's COCO image count")
+    parser.add_argument("--n-ar", type=int, default=None,
+                        help="override the profile's Kinetics clip count")
+    parser.add_argument("--od-size", type=int, default=None)
     parser.add_argument("--od-sigmas", default=None,
                         help="override the profile's comma-separated OD sigma grid")
     parser.add_argument("--od-roi-sigmas", default=None,
@@ -211,6 +271,11 @@ def main() -> None:
                         help="deterministic COCO shuffle seed")
     parser.add_argument("--od-codecs", default=None,
                         help="comma-separated OD codecs: h264,h265")
+    parser.add_argument("--od-mask-backbone", choices=sorted(OD_BACKBONES), default=None)
+    parser.add_argument("--od-eval-backbone", choices=sorted(OD_BACKBONES), default=None)
+    parser.add_argument("--ar-probe", choices=["tubes", "post"], default=None)
+    parser.add_argument("--ar-post-sigmas", default=None)
+    parser.add_argument("--ar-post-min-qp", type=int, default=None)
     parser.add_argument("--qps", default=None,
                         help="override the profile's comma-separated QP grid")
     parser.add_argument("--bootstrap", type=int, default=None,
@@ -240,6 +305,8 @@ def main() -> None:
             run_ar=not args.skip_ar,
             run_od=not args.skip_od,
             n_od=args.n_od,
+            n_ar=args.n_ar,
+            od_size=args.od_size,
             od_sigmas=args.od_sigmas,
             od_roi_sigmas=args.od_roi_sigmas,
             od_post_sigmas=args.od_post_sigmas,
@@ -248,6 +315,11 @@ def main() -> None:
             od_mask_grid=args.od_mask_grid,
             od_seed=args.od_seed,
             od_codecs=args.od_codecs,
+            od_mask_backbone=args.od_mask_backbone,
+            od_eval_backbone=args.od_eval_backbone,
+            ar_probe=args.ar_probe,
+            ar_post_sigmas=args.ar_post_sigmas,
+            ar_post_min_qp=args.ar_post_min_qp,
             qps=args.qps,
             bootstrap=args.bootstrap,
         ))),

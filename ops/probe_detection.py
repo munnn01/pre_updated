@@ -111,6 +111,14 @@ class Detector:
                 D.fasterrcnn_mobilenet_v3_large_fpn,
                 D.FasterRCNN_MobileNet_V3_Large_FPN_Weights.COCO_V1,
             ),
+            "retinanet_resnet50_fpn_v2": (
+                D.retinanet_resnet50_fpn_v2,
+                D.RetinaNet_ResNet50_FPN_V2_Weights.COCO_V1,
+            ),
+            "fcos_resnet50_fpn": (
+                D.fcos_resnet50_fpn,
+                D.FCOS_ResNet50_FPN_Weights.COCO_V1,
+            ),
         }
         if backbone not in table:
             raise ValueError(f"unsupported detector {backbone!r}; have {list(table)}")

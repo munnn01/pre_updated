@@ -13,6 +13,7 @@ RUN_OD="${RUN_OD:-1}"
 if [ "$PROFILE" = "confirmatory" ]; then
   N_OD="${N_OD:-500}"
   N_AR="${N_AR:-200}"
+  OD_SIZE="${OD_SIZE:-320}"
   QPS="${QPS:-30,35,40,45,50}"
   OD_SIGMAS="${OD_SIGMAS:-4,8,16}"
   OD_SCORE="${OD_SCORE:-0.5}"
@@ -25,12 +26,18 @@ if [ "$PROFILE" = "confirmatory" ]; then
   OD_MASK_GRID="${OD_MASK_GRID:-1}"
   OD_SEED="${OD_SEED:-0}"
   OD_CODECS="${OD_CODECS:-h264,h265}"
+  OD_MASK_BACKBONE="${OD_MASK_BACKBONE:-fasterrcnn_mobilenet_v3_large_fpn}"
+  OD_EVAL_BACKBONE="${OD_EVAL_BACKBONE:-fasterrcnn_resnet50_fpn}"
   AR_SIGMAS="${AR_SIGMAS:-4,8}"
   TEMPORAL_STRENGTHS="${TEMPORAL_STRENGTHS:-0,0.5}"
+  AR_PROBE="${AR_PROBE:-tubes}"
+  AR_POST_SIGMAS="${AR_POST_SIGMAS:-1}"
+  AR_POST_MIN_QP="${AR_POST_MIN_QP:-45}"
   BOOTSTRAP="${BOOTSTRAP:-1000}"
 else
   N_OD="${N_OD:-50}"
   N_AR="${N_AR:-20}"
+  OD_SIZE="${OD_SIZE:-320}"
   QPS="${QPS:-35,40,45}"
   OD_SIGMAS="${OD_SIGMAS:-2,4}"
   OD_SCORE="${OD_SCORE:-0.2}"
@@ -43,8 +50,13 @@ else
   OD_MASK_GRID="${OD_MASK_GRID:-1}"
   OD_SEED="${OD_SEED:-0}"
   OD_CODECS="${OD_CODECS:-h264,h265}"
+  OD_MASK_BACKBONE="${OD_MASK_BACKBONE:-fasterrcnn_mobilenet_v3_large_fpn}"
+  OD_EVAL_BACKBONE="${OD_EVAL_BACKBONE:-fasterrcnn_resnet50_fpn}"
   AR_SIGMAS="${AR_SIGMAS:-4}"
   TEMPORAL_STRENGTHS="${TEMPORAL_STRENGTHS:-0.25}"
+  AR_PROBE="${AR_PROBE:-tubes}"
+  AR_POST_SIGMAS="${AR_POST_SIGMAS:-1}"
+  AR_POST_MIN_QP="${AR_POST_MIN_QP:-45}"
   BOOTSTRAP="${BOOTSTRAP:-0}"
 fi
 
@@ -112,26 +124,38 @@ if [ "$RUN_AR" = "1" ]; then
 fi
 
 if [ "$RUN_AR" = "1" ]; then
-  echo "[stage] AR importance-tube start"
-  python ops/probe_action_tubes.py \
-    --index "$INDEX" --split test --n-clips "$N_AR" \
-    --num-frames 16 --size 128 --qps "$QPS" \
-    --sigmas "$AR_SIGMAS" --temporal-strengths "$TEMPORAL_STRENGTHS" \
-    --score 0.2 --dilate 0.30 --feather 8 --ar-backbone r3d_18 \
-    --out "$OUT/ar_importance_tubes" 2>&1 | tee "$OUT/ar_importance_tubes.log"
-  echo "[stage] AR importance-tube complete"
+  if [ "$AR_PROBE" = "post" ]; then
+    echo "[stage] AR decoder-POST start"
+    python ops/probe_action_post.py \
+      --index "$INDEX" --split test --n-clips "$N_AR" \
+      --num-frames 16 --size 128 --qps "$QPS" \
+      --post-sigmas "$AR_POST_SIGMAS" --post-min-qp "$AR_POST_MIN_QP" \
+      --ar-backbone r3d_18 --out "$OUT/ar_decoder_post" \
+      2>&1 | tee "$OUT/ar_decoder_post.log"
+    echo "[stage] AR decoder-POST complete"
+  else
+    echo "[stage] AR importance-tube start"
+    python ops/probe_action_tubes.py \
+      --index "$INDEX" --split test --n-clips "$N_AR" \
+      --num-frames 16 --size 128 --qps "$QPS" \
+      --sigmas "$AR_SIGMAS" --temporal-strengths "$TEMPORAL_STRENGTHS" \
+      --score 0.2 --dilate 0.30 --feather 8 --ar-backbone r3d_18 \
+      --out "$OUT/ar_importance_tubes" 2>&1 | tee "$OUT/ar_importance_tubes.log"
+    echo "[stage] AR importance-tube complete"
+  fi
 fi
 
 if [ "$RUN_OD" = "1" ]; then
   echo "[stage] OD background-suppression start"
   python ops/probe_background_suppression.py \
     --images "$COCO_VAL" --ann "$COCO_ANN" \
-    --n-images "$N_OD" --size 320 --qps "$QPS" \
+    --n-images "$N_OD" --size "$OD_SIZE" --qps "$QPS" \
     --sigmas "$OD_SIGMAS" --score "$OD_SCORE" --dilate "$OD_DILATE" \
     --feather "$OD_FEATHER" --roi-sigmas "$OD_ROI_SIGMAS" \
     --post-sigmas "$OD_POST_SIGMAS" --post-min-qp "$OD_POST_MIN_QP" \
     --min-margin-px "$OD_MIN_MARGIN_PX" --mask-grid "$OD_MASK_GRID" \
     --bootstrap "$BOOTSTRAP" --seed "$OD_SEED" --codecs "$OD_CODECS" \
+    --mask-backbone "$OD_MASK_BACKBONE" --eval-backbone "$OD_EVAL_BACKBONE" \
     --out "$OUT/od_background_suppression" 2>&1 | tee "$OUT/od_background_suppression.log"
   echo "[stage] OD background-suppression complete"
 fi

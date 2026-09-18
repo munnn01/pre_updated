@@ -50,6 +50,8 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         run_ar=False,
         run_od=True,
         n_od=200,
+        n_ar=33,
+        od_size=480,
         od_sigmas="4",
         od_roi_sigmas="0,1",
         od_post_sigmas="0,1",
@@ -58,6 +60,11 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         od_mask_grid=16,
         od_seed=20260918,
         od_codecs="h264",
+        od_mask_backbone="fasterrcnn_resnet50_fpn",
+        od_eval_backbone="fcos_resnet50_fpn",
+        ar_probe="post",
+        ar_post_sigmas="1,2",
+        ar_post_min_qp=45,
         qps="30,35,40,45,50",
         bootstrap=1000,
     )
@@ -65,6 +72,8 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     assert 'RUN_AR="0"' in cell
     assert 'RUN_OD="1"' in cell
     assert 'N_OD="200"' in cell
+    assert 'N_AR="33"' in cell
+    assert 'OD_SIZE="480"' in cell
     assert 'OD_SIGMAS="4"' in cell
     assert 'OD_ROI_SIGMAS="0,1"' in cell
     assert 'OD_POST_SIGMAS="0,1"' in cell
@@ -73,8 +82,16 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     assert 'OD_MASK_GRID="16"' in cell
     assert 'OD_SEED="20260918"' in cell
     assert 'OD_CODECS="h264"' in cell
+    assert 'OD_MASK_BACKBONE="fasterrcnn_resnet50_fpn"' in cell
+    assert 'OD_EVAL_BACKBONE="fcos_resnet50_fpn"' in cell
+    assert 'AR_PROBE="post"' in cell
+    assert 'AR_POST_SIGMAS="1,2"' in cell
+    assert 'AR_POST_MIN_QP="45"' in cell
     assert '--seed "$OD_SEED"' in cell
     assert '--codecs "$OD_CODECS"' in cell
+    assert '--mask-backbone "$OD_MASK_BACKBONE"' in cell
+    assert '--eval-backbone "$OD_EVAL_BACKBONE"' in cell
+    assert "ops/probe_action_post.py" in cell
     assert 'QPS="30,35,40,45,50"' in cell
     assert 'BOOTSTRAP="1000"' in cell
     assert 'if [ "$RUN_AR" = "1" ]; then\n  python scripts/build_train_index.py' in cell
@@ -86,6 +103,8 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     ("kwargs", "message"),
     [
         ({"n_od": 0}, "n_od"),
+        ({"n_ar": 0}, "n_ar"),
+        ({"od_size": 0}, "od_size"),
         ({"od_sigmas": "4;rm"}, "od_sigmas"),
         ({"od_roi_sigmas": "0;rm"}, "od_roi_sigmas"),
         ({"od_post_sigmas": "1;rm"}, "od_post_sigmas"),
@@ -95,6 +114,11 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         ({"od_seed": -1}, "od_seed"),
         ({"od_codecs": "h264,hevc"}, "od_codecs"),
         ({"od_codecs": "h264,h264"}, "od_codecs"),
+        ({"od_mask_backbone": "yolo"}, "od_mask_backbone"),
+        ({"od_eval_backbone": "yolo"}, "od_eval_backbone"),
+        ({"ar_probe": "unknown"}, "ar_probe"),
+        ({"ar_post_sigmas": "1;rm"}, "ar_post_sigmas"),
+        ({"ar_post_min_qp": -1}, "ar_post_min_qp"),
         ({"qps": "30;45"}, "qps"),
         ({"bootstrap": -1}, "bootstrap"),
     ],

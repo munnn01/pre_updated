@@ -126,10 +126,14 @@ def main() -> None:
                     help="soft protection band in pixels around the exact-identity boxes")
     ap.add_argument("--mask-backbone", default="fasterrcnn_mobilenet_v3_large_fpn",
                     choices=["fasterrcnn_resnet50_fpn",
-                             "fasterrcnn_mobilenet_v3_large_fpn"])
+                             "fasterrcnn_mobilenet_v3_large_fpn",
+                             "retinanet_resnet50_fpn_v2",
+                             "fcos_resnet50_fpn"])
     ap.add_argument("--eval-backbone", default="fasterrcnn_resnet50_fpn",
                     choices=["fasterrcnn_resnet50_fpn",
-                             "fasterrcnn_mobilenet_v3_large_fpn"])
+                             "fasterrcnn_mobilenet_v3_large_fpn",
+                             "retinanet_resnet50_fpn_v2",
+                             "fcos_resnet50_fpn"])
     ap.add_argument("--allow-same-detector", action="store_true",
                     help="allow an on-teacher diagnostic; never use it for a claim")
     ap.add_argument("--bootstrap", type=int, default=0,
