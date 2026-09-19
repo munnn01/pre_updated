@@ -1,8 +1,8 @@
 # Kế hoạch tiếp theo: V3 codec-native ROI/QP cho OD và Action Recognition
 
 **Tên file chuẩn:** `docs/NEXT_PLAN_JOINT_OD_AR_ROI_V3.md`  
-**Trạng thái:** đã kiểm chứng kết quả V2; V3 chưa triển khai/chưa đẩy Kaggle  
-**Ngày chốt:** 2026-09-19
+**Trạng thái:** đã kiểm chứng V2; V3 CRF+AQ đã triển khai, chờ F0 Kaggle
+**Ngày cập nhật protocol:** 2026-09-20
 
 File này là nguồn quyết định duy nhất cho vòng phát triển tiếp theo. Không đổi
 ngưỡng thành công sau khi đã thấy kết quả.
@@ -160,7 +160,12 @@ Tạo một `TaskROIMap` rồi chuyển thành tối đa bốn rectangle, căn b
 Vì mỗi clip được encode bằng một lệnh riêng, tube cố định theo clip có thể đi qua
 FFmpeg CLI `addroi`; chưa cần viết custom decoder hoặc gửi mask cho decoder.
 
-### 4.2 Phân bổ QP
+### 4.2 Rate control và phân bổ QP
+
+V3 là một family thí nghiệm mới dùng **CRF + AQ**, không tái sử dụng anchor CQP
+của V1/V2. `libx264` vô hiệu AQ trong CQP nên ROI side-data có thể bị bỏ qua;
+`libx265` không có cùng ràng buộc tuyệt đối, nhưng dùng chung CRF+AQ giúp protocol
+hai codec nhất quán. Không so trực tiếp BD-rate V3/CRF với số V1/V2/CQP.
 
 Trong mỗi arm:
 
@@ -168,19 +173,23 @@ Trong mỗi arm:
 2. thêm rectangle toàn khung sau với background offset dương;
 3. do region ưu tiên đứng trước, ROI giữ QP gốc/tốt hơn, còn phần không thuộc ROI
    nhận background offset;
-4. bật AQ cho cả x264 và x265, đồng thời fail nếu log báo ROI bị bỏ qua.
+4. bật AQ cho cả x264 và x265, chạy FFmpeg ở `loglevel=warning`, lưu stderr và
+   hard-fail nếu log báo ROI bị bỏ qua/không hỗ trợ.
 
-Arm được định nghĩa bằng **delta-QP ngữ nghĩa**, không dùng trực tiếp một
+Arm được định nghĩa bằng **delta-QP yêu cầu**, không dùng trực tiếp một
 `qoffset` chung vì x264 và x265 ánh xạ qoffset khác nhau. Adapter codec chuyển
-`delta_qp` sang rational qoffset rồi ghi cả giá trị yêu cầu lẫn giá trị thực vào
-JSON.
+`delta_qp` sang rational qoffset rồi ghi cả giá trị yêu cầu lẫn rational truyền
+cho encoder vào JSON. AQ có thể làm QP block thực tế khác yêu cầu, nên báo cáo
+không được gọi offset này là actual per-block delta-QP.
 
 ### 4.3 Accounting công bằng
 
 - đếm toàn bộ byte của bitstream thật; không trừ header hoặc signaling;
-- cùng codec, preset, GOP, pixel format và QP grid với anchor;
+- anchor và mọi control/arm dùng cùng codec, CRF grid, AQ mode/strength, preset,
+  GOP và pixel format;
 - không truyền file mask/ROI riêng cho decoder;
 - báo riêng thời gian tạo map, thời gian encode và peak GPU memory;
+- thêm **sham-ROI control** đi qua đúng ROI/filter path nhưng mọi offset bằng 0;
 - thêm **global-QP control** có cùng background delta nhưng không bảo vệ ROI để
   chứng minh lợi ích đến từ phân bổ không gian, không chỉ từ đổi QP toàn cục.
 
@@ -194,7 +203,7 @@ Chỉ dùng 20 clip AR và 20 ảnh OD trên một tài khoản.
 
 1. `ffmpeg -filters` có `addroi`, và cả `libx264`/`libx265` hiện diện;
 2. AQ bật; log không chứa “skipping ROI”;
-3. cùng input/QP nhưng đổi ROI làm thay đổi bitstream size và reconstruction;
+3. cùng input/CRF nhưng đổi ROI làm thay đổi bitstream size và reconstruction;
 4. bitstream decode bằng ffmpeg chuẩn, không cần side file;
 5. ROI `qoffset=0` + background offset chỉ làm thay đổi vùng ngoài ROI theo
    hướng dự kiến ở kiểm tra block-level.
@@ -204,8 +213,9 @@ bridge libavcodec nhỏ; không giả định CLI đã hỗ trợ.
 
 ### Phase D1 — development screen trên validation
 
-Common setting AR: cùng hash split V2, 200 clip, 16 frame, stride 2, size 128,
-QP `30/35/40/45/50`. Evaluator gồm R3D-18, MC3-18 và R2Plus1D-18.
+Common setting AR: cùng hash split V2, 200 clip, 16 frame, stride 2, size 128.
+F0 kiểm tra dải CRF theo bitrate/reconstruction không dùng nhãn; grid D1 được
+khóa là CRF `24/30/36/42/48`. Evaluator gồm R3D-18, MC3-18 và R2Plus1D-18.
 
 Sáu arm cố định:
 
@@ -275,9 +285,9 @@ bộ; giới hạn runtime của chính Kaggle vẫn tồn tại và không th�
 
 | File | Việc cần làm |
 |---|---|
-| `src/codecs/roi.py` | build/validate chuỗi `addroi`, adapter delta-QP cho x264/x265, kiểm tra AQ/log |
-| `src/models/task_roi.py` | chuyển OD box hoặc AR saliency-motion tube thành tối đa 4 rectangle block-aligned |
-| `ops/probe_joint_roi.py` | anchor, six arms, global-QP controls, per-clip records, BD-rate và gate |
+| `src/codecs/roi.py` | build/validate chuỗi `addroi`, CRF+AQ, adapter delta-QP và kiểm tra log |
+| `src/models/task_roi.py` | chuyển saliency-motion tube thành rectangle block-aligned có area cap |
+| `ops/probe_joint_roi.py` | F0; anchor, sham, six arms, global controls, records, BD-rate và gate |
 | `ops/push_roi_probe.py` | tạo Kaggle notebook/kernel, chia codec/evaluator, mặc định không local timeout |
 | `tests/test_roi_codec.py` | identity, priority/overlap, block alignment, bit accounting, codec capability |
 | `tests/test_task_roi.py` | area cap, temporal stability, không dùng ground-truth, deterministic map |
@@ -293,7 +303,7 @@ Artifact bắt buộc:
 
 ## 8. Thứ tự thực hiện
 
-1. Implement F0 và unit test codec capability.
+1. Implement F0, sham control và unit test codec capability.
 2. Chạy local smoke trên 2 clip/2 ảnh bằng environment
    `D:\STUDY\AI\envs\ten_env`.
 3. Commit/push GitHub một lần.
