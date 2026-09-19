@@ -506,8 +506,12 @@ def main() -> None:
     parser.add_argument("--bootstrap", type=int, default=None,
                         help="override paired image-bootstrap draws")
     parser.add_argument("--accelerator", default="NvidiaTeslaT4")
-    parser.add_argument("--timeout", type=int, default=3600,
-                        help="Kaggle run limit in seconds (quick default: one hour)")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=0,
+        help="optional Kaggle run limit in seconds; 0 leaves it unset",
+    )
     parser.add_argument(
         "--datasets",
         default=",".join(DEFAULT_DATASETS),

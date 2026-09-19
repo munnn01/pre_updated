@@ -89,7 +89,7 @@ python ops/push_joint_probe.py --commit <sha> --account <acct> --skip-od \
     --ar-backbone mc3_18 --ar-guard-protect-fractions 0.65,0.8 \
     --ar-guard-motion-fractions 0.5 --ar-guard-max-blends 0.25,0.4 \
     --ar-guard-sigma 2 --ar-guard-retention 0.97 \
-    --ar-guard-temporal-strength 0.1 --timeout 10800 \
+    --ar-guard-temporal-strength 0.1 \
     --slug preupd-ar-guard-context-mc3-v1
 
 # OD checkpoint: evaluator tích hợp, COCO mAP + bootstrap CI
