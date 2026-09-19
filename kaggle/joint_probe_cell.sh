@@ -44,6 +44,14 @@ if [ "$PROFILE" = "confirmatory" ]; then
   AR_SALIENCY_MODES="${AR_SALIENCY_MODES:-clip,tube}"
   AR_SALIENCY_SIGMA="${AR_SALIENCY_SIGMA:-8}"
   AR_TEMPORAL_STRENGTH="${AR_TEMPORAL_STRENGTH:-0.75}"
+  AR_GUARD_PROTECT_FRACTIONS="${AR_GUARD_PROTECT_FRACTIONS:-0.65,0.8}"
+  AR_GUARD_MOTION_FRACTIONS="${AR_GUARD_MOTION_FRACTIONS:-0.5}"
+  AR_GUARD_MAX_BLENDS="${AR_GUARD_MAX_BLENDS:-0.25,0.4}"
+  AR_GUARD_SIGMA="${AR_GUARD_SIGMA:-2}"
+  AR_GUARD_RETENTION="${AR_GUARD_RETENTION:-0.97}"
+  AR_GUARD_BLEND_STEPS="${AR_GUARD_BLEND_STEPS:-4}"
+  AR_GUARD_TEMPORAL_STRENGTH="${AR_GUARD_TEMPORAL_STRENGTH:-0.1}"
+  AR_GUARD_FEATHER="${AR_GUARD_FEATHER:-1}"
   BOOTSTRAP="${BOOTSTRAP:-1000}"
 else
   N_OD="${N_OD:-50}"
@@ -79,6 +87,14 @@ else
   AR_SALIENCY_MODES="${AR_SALIENCY_MODES:-clip,tube}"
   AR_SALIENCY_SIGMA="${AR_SALIENCY_SIGMA:-8}"
   AR_TEMPORAL_STRENGTH="${AR_TEMPORAL_STRENGTH:-0.75}"
+  AR_GUARD_PROTECT_FRACTIONS="${AR_GUARD_PROTECT_FRACTIONS:-0.65,0.8}"
+  AR_GUARD_MOTION_FRACTIONS="${AR_GUARD_MOTION_FRACTIONS:-0.5}"
+  AR_GUARD_MAX_BLENDS="${AR_GUARD_MAX_BLENDS:-0.25,0.4}"
+  AR_GUARD_SIGMA="${AR_GUARD_SIGMA:-2}"
+  AR_GUARD_RETENTION="${AR_GUARD_RETENTION:-0.97}"
+  AR_GUARD_BLEND_STEPS="${AR_GUARD_BLEND_STEPS:-4}"
+  AR_GUARD_TEMPORAL_STRENGTH="${AR_GUARD_TEMPORAL_STRENGTH:-0.1}"
+  AR_GUARD_FEATHER="${AR_GUARD_FEATHER:-1}"
   BOOTSTRAP="${BOOTSTRAP:-0}"
 fi
 
@@ -167,6 +183,23 @@ if [ "$RUN_AR" = "1" ]; then
       --ar-backbone "$AR_BACKBONE" --out "$OUT/ar_motion_post" \
       2>&1 | tee "$OUT/ar_motion_post.log"
     echo "[stage] AR motion-preserving POST complete"
+  elif [ "$AR_PROBE" = "guarded" ]; then
+    echo "[stage] AR guarded saliency-motion prefilter start"
+    python ops/probe_action_guarded.py \
+      --index "$INDEX" --split "$AR_SPLIT" --n-clips "$N_AR" \
+      --num-frames 16 --size 128 --qps "$QPS" \
+      --protect-fractions "$AR_GUARD_PROTECT_FRACTIONS" \
+      --motion-fractions "$AR_GUARD_MOTION_FRACTIONS" \
+      --max-blends "$AR_GUARD_MAX_BLENDS" \
+      --sigma "$AR_GUARD_SIGMA" \
+      --guard-retention "$AR_GUARD_RETENTION" \
+      --blend-steps "$AR_GUARD_BLEND_STEPS" \
+      --temporal-strength "$AR_GUARD_TEMPORAL_STRENGTH" \
+      --feather "$AR_GUARD_FEATHER" --motion-tau 0.05 \
+      --saliency-teacher "$AR_SALIENCY_TEACHER" \
+      --eval-backbone "$AR_BACKBONE" --out "$OUT/ar_guarded" \
+      2>&1 | tee "$OUT/ar_guarded.log"
+    echo "[stage] AR guarded saliency-motion prefilter complete"
   elif [ "$AR_PROBE" = "saliency" ]; then
     echo "[stage] AR action-saliency suppression start"
     python ops/probe_action_saliency.py \

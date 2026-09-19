@@ -54,6 +54,8 @@ là các module *thêm/sửa* cấu trúc — thứ mAP không thưởng. Nên h
 | R0.5 halo8 + POST σ=1, held-out n=500 | ✅ QP45 chốt: H.264 −13.15%, H.265 −8.02%; gap PASS |
 | R1 — gate học được | ⏸ chỉ mở nếu R0 dương |
 | Importance-tube probe trên Kinetics | ❌ n=20: H.264 +9.80%, H.265 +8.57%; không scale detector-only tube |
+| AR saliency V1, 3 evaluator × 2 codec | ❌ mọi BD-rate dương; best +25.10/+18.50%, source Top-1 giảm 19--23 pp |
+| AR guarded saliency-motion V2 | 🚀 đã implement; source-confidence fallback, chờ screen 2 family × 3 evaluator |
 
 ## Chạy
 
@@ -80,6 +82,15 @@ python ops/push_detection_probe.py --commit <sha> --account <acct> \
 # Probe chung OD→AR, không train (cần ffmpeg + index Kinetics)
 python ops/probe_action_tubes.py --index data/index/kinetics_hash_split.json \
     --n-clips 200 --sigmas 4,8 --temporal-strengths 0,0.5
+
+# AR V2: saliency + motion, mild blend, tự lùi về identity nếu teacher suy giảm
+python ops/push_joint_probe.py --commit <sha> --account <acct> --skip-od \
+    --profile confirmatory --ar-probe guarded --ar-split val --n-ar 200 \
+    --ar-backbone mc3_18 --ar-guard-protect-fractions 0.65,0.8 \
+    --ar-guard-motion-fractions 0.5 --ar-guard-max-blends 0.25,0.4 \
+    --ar-guard-sigma 2 --ar-guard-retention 0.97 \
+    --ar-guard-temporal-strength 0.1 --timeout 10800 \
+    --slug preupd-ar-guard-context-mc3-v1
 
 # OD checkpoint: evaluator tích hợp, COCO mAP + bootstrap CI
 python evaluate.py --config configs/sandwich_coco_det.yaml \

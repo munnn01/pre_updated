@@ -20,6 +20,7 @@ def test_joint_cell_pins_ref_and_runs_both_probes():
     assert "ops/probe_action_tubes.py" in cell
     assert "ops/probe_action_motion_post.py" in cell
     assert "ops/probe_action_saliency.py" in cell
+    assert "ops/probe_action_guarded.py" in cell
     assert cell.index("ops/probe_action_tubes.py") < cell.index(
         "ops/probe_background_suppression.py"
     )
@@ -77,6 +78,14 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         ar_saliency_modes="clip,tube",
         ar_saliency_sigma=8,
         ar_temporal_strength=0.75,
+        ar_guard_protect_fractions="0.65,0.8",
+        ar_guard_motion_fractions="0.5",
+        ar_guard_max_blends="0.25,0.4",
+        ar_guard_sigma=2,
+        ar_guard_retention=0.97,
+        ar_guard_blend_steps=4,
+        ar_guard_temporal_strength=0.1,
+        ar_guard_feather=1,
         qps="30,35,40,45,50",
         bootstrap=1000,
     )
@@ -110,6 +119,14 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
     assert 'AR_SALIENCY_MODES="clip,tube"' in cell
     assert 'AR_SALIENCY_SIGMA="8"' in cell
     assert 'AR_TEMPORAL_STRENGTH="0.75"' in cell
+    assert 'AR_GUARD_PROTECT_FRACTIONS="0.65,0.8"' in cell
+    assert 'AR_GUARD_MOTION_FRACTIONS="0.5"' in cell
+    assert 'AR_GUARD_MAX_BLENDS="0.25,0.4"' in cell
+    assert 'AR_GUARD_SIGMA="2"' in cell
+    assert 'AR_GUARD_RETENTION="0.97"' in cell
+    assert 'AR_GUARD_BLEND_STEPS="4"' in cell
+    assert 'AR_GUARD_TEMPORAL_STRENGTH="0.1"' in cell
+    assert 'AR_GUARD_FEATHER="1"' in cell
     assert '--seed "$OD_SEED"' in cell
     assert '--codecs "$OD_CODECS"' in cell
     assert '--mask-backbone "$OD_MASK_BACKBONE"' in cell
@@ -155,6 +172,14 @@ def test_joint_cell_can_run_only_od_without_rewriting_template():
         ({"ar_saliency_modes": "clip,frame"}, "ar_saliency_modes"),
         ({"ar_saliency_sigma": 0}, "ar_saliency_sigma"),
         ({"ar_temporal_strength": 1.1}, "ar_temporal_strength"),
+        ({"ar_guard_protect_fractions": "0,0.65"}, "ar_guard_protect_fractions"),
+        ({"ar_guard_motion_fractions": "0.5,0.5"}, "ar_guard_motion_fractions"),
+        ({"ar_guard_max_blends": "1"}, "ar_guard_max_blends"),
+        ({"ar_guard_sigma": 0}, "ar_guard_sigma"),
+        ({"ar_guard_retention": 0}, "ar_guard_retention"),
+        ({"ar_guard_blend_steps": 0}, "ar_guard_blend_steps"),
+        ({"ar_guard_temporal_strength": 1.1}, "ar_guard_temporal_strength"),
+        ({"ar_guard_feather": -1}, "ar_guard_feather"),
         ({"qps": "30;45"}, "qps"),
         ({"bootstrap": -1}, "bootstrap"),
     ],

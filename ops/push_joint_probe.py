@@ -66,6 +66,14 @@ def render_cell(
     ar_saliency_modes: str | None = None,
     ar_saliency_sigma: float | None = None,
     ar_temporal_strength: float | None = None,
+    ar_guard_protect_fractions: str | None = None,
+    ar_guard_motion_fractions: str | None = None,
+    ar_guard_max_blends: str | None = None,
+    ar_guard_sigma: float | None = None,
+    ar_guard_retention: float | None = None,
+    ar_guard_blend_steps: int | None = None,
+    ar_guard_temporal_strength: float | None = None,
+    ar_guard_feather: int | None = None,
     qps: str | None = None,
     bootstrap: int | None = None,
 ) -> str:
@@ -166,8 +174,10 @@ def render_cell(
                 shell,
             )
     if ar_probe is not None:
-        if ar_probe not in {"tubes", "post", "motion", "saliency"}:
-            raise ValueError("ar_probe must be tubes, post, motion, or saliency")
+        if ar_probe not in {"tubes", "post", "motion", "saliency", "guarded"}:
+            raise ValueError(
+                "ar_probe must be tubes, post, motion, saliency, or guarded"
+            )
         shell = re.sub(
             r'AR_PROBE="\$\{AR_PROBE:-[^}]+\}"',
             f'AR_PROBE="{ar_probe}"',
@@ -299,6 +309,76 @@ def render_cell(
             f'AR_TEMPORAL_STRENGTH="{ar_temporal_strength:g}"',
             shell,
         )
+    for value, argument, variable in (
+        (
+            ar_guard_protect_fractions,
+            "ar_guard_protect_fractions",
+            "AR_GUARD_PROTECT_FRACTIONS",
+        ),
+        (
+            ar_guard_motion_fractions,
+            "ar_guard_motion_fractions",
+            "AR_GUARD_MOTION_FRACTIONS",
+        ),
+        (ar_guard_max_blends, "ar_guard_max_blends", "AR_GUARD_MAX_BLENDS"),
+    ):
+        if value is not None:
+            try:
+                grid = [float(item) for item in value.split(",") if item]
+            except ValueError as exc:
+                raise ValueError(f"{argument} must be numeric") from exc
+            if (
+                not grid
+                or len(grid) != len(set(grid))
+                or any(not 0.0 < item < 1.0 for item in grid)
+            ):
+                raise ValueError(f"{argument} must be unique values in (0,1)")
+            normalized = ",".join(f"{item:g}" for item in grid)
+            shell = re.sub(
+                rf'{variable}="\$\{{{variable}:-[^}}]+\}}"',
+                f'{variable}="{normalized}"',
+                shell,
+            )
+    if ar_guard_sigma is not None:
+        if ar_guard_sigma <= 0:
+            raise ValueError("ar_guard_sigma must be positive")
+        shell = re.sub(
+            r'AR_GUARD_SIGMA="\$\{AR_GUARD_SIGMA:-[^}]+\}"',
+            f'AR_GUARD_SIGMA="{ar_guard_sigma:g}"',
+            shell,
+        )
+    if ar_guard_retention is not None:
+        if not 0.0 < ar_guard_retention <= 1.0:
+            raise ValueError("ar_guard_retention must be in (0,1]")
+        shell = re.sub(
+            r'AR_GUARD_RETENTION="\$\{AR_GUARD_RETENTION:-[^}]+\}"',
+            f'AR_GUARD_RETENTION="{ar_guard_retention:g}"',
+            shell,
+        )
+    if ar_guard_blend_steps is not None:
+        if ar_guard_blend_steps <= 0:
+            raise ValueError("ar_guard_blend_steps must be positive")
+        shell = re.sub(
+            r'AR_GUARD_BLEND_STEPS="\$\{AR_GUARD_BLEND_STEPS:-\d+\}"',
+            f'AR_GUARD_BLEND_STEPS="{ar_guard_blend_steps}"',
+            shell,
+        )
+    if ar_guard_temporal_strength is not None:
+        if not 0.0 <= ar_guard_temporal_strength <= 1.0:
+            raise ValueError("ar_guard_temporal_strength must be in [0,1]")
+        shell = re.sub(
+            r'AR_GUARD_TEMPORAL_STRENGTH="\$\{AR_GUARD_TEMPORAL_STRENGTH:-[^}]+\}"',
+            f'AR_GUARD_TEMPORAL_STRENGTH="{ar_guard_temporal_strength:g}"',
+            shell,
+        )
+    if ar_guard_feather is not None:
+        if ar_guard_feather < 0:
+            raise ValueError("ar_guard_feather must be non-negative")
+        shell = re.sub(
+            r'AR_GUARD_FEATHER="\$\{AR_GUARD_FEATHER:-\d+\}"',
+            f'AR_GUARD_FEATHER="{ar_guard_feather}"',
+            shell,
+        )
     if qps is not None:
         if not qps or any(c not in "0123456789," for c in qps):
             raise ValueError("qps must be a comma-separated integer grid")
@@ -396,7 +476,9 @@ def main() -> None:
     parser.add_argument("--od-mask-backbone", choices=sorted(OD_BACKBONES), default=None)
     parser.add_argument("--od-eval-backbone", choices=sorted(OD_BACKBONES), default=None)
     parser.add_argument(
-        "--ar-probe", choices=["tubes", "post", "motion", "saliency"], default=None
+        "--ar-probe",
+        choices=["tubes", "post", "motion", "saliency", "guarded"],
+        default=None,
     )
     parser.add_argument("--ar-split", choices=["train", "val", "test"], default=None)
     parser.add_argument("--ar-backbone", choices=sorted(AR_BACKBONES), default=None)
@@ -411,6 +493,14 @@ def main() -> None:
     parser.add_argument("--ar-saliency-modes", default=None)
     parser.add_argument("--ar-saliency-sigma", type=float, default=None)
     parser.add_argument("--ar-temporal-strength", type=float, default=None)
+    parser.add_argument("--ar-guard-protect-fractions", default=None)
+    parser.add_argument("--ar-guard-motion-fractions", default=None)
+    parser.add_argument("--ar-guard-max-blends", default=None)
+    parser.add_argument("--ar-guard-sigma", type=float, default=None)
+    parser.add_argument("--ar-guard-retention", type=float, default=None)
+    parser.add_argument("--ar-guard-blend-steps", type=int, default=None)
+    parser.add_argument("--ar-guard-temporal-strength", type=float, default=None)
+    parser.add_argument("--ar-guard-feather", type=int, default=None)
     parser.add_argument("--qps", default=None,
                         help="override the profile's comma-separated QP grid")
     parser.add_argument("--bootstrap", type=int, default=None,
@@ -466,6 +556,14 @@ def main() -> None:
             ar_saliency_modes=args.ar_saliency_modes,
             ar_saliency_sigma=args.ar_saliency_sigma,
             ar_temporal_strength=args.ar_temporal_strength,
+            ar_guard_protect_fractions=args.ar_guard_protect_fractions,
+            ar_guard_motion_fractions=args.ar_guard_motion_fractions,
+            ar_guard_max_blends=args.ar_guard_max_blends,
+            ar_guard_sigma=args.ar_guard_sigma,
+            ar_guard_retention=args.ar_guard_retention,
+            ar_guard_blend_steps=args.ar_guard_blend_steps,
+            ar_guard_temporal_strength=args.ar_guard_temporal_strength,
+            ar_guard_feather=args.ar_guard_feather,
             qps=args.qps,
             bootstrap=args.bootstrap,
         ))),
