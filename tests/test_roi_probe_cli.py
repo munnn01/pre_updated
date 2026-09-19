@@ -1,5 +1,8 @@
 import importlib.util
+import json
 from pathlib import Path
+
+import numpy as np
 
 
 def _module():
@@ -32,3 +35,9 @@ def test_crf_grid_parser_rejects_duplicates():
         assert "unique" in str(exc)
     else:
         raise AssertionError("duplicate CRFs were accepted")
+
+
+def test_json_artifacts_accept_numpy_gate_scalars():
+    module = _module()
+    encoded = module._json_text({"pass": np.bool_(True), "count": np.int64(3), "metric": np.float32(1.5)})
+    assert json.loads(encoded) == {"pass": True, "count": 3, "metric": 1.5}

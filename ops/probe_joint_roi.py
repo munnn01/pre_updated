@@ -60,6 +60,17 @@ def _finite(value: float) -> float | None:
     return value if np.isfinite(value) else None
 
 
+def _json_text(value: object) -> str:
+    """Pretty JSON that safely converts NumPy scalar diagnostics."""
+
+    def convert(item: object) -> object:
+        if isinstance(item, np.generic):
+            return item.item()
+        raise TypeError(f"Object of type {type(item).__name__} is not JSON serializable")
+
+    return json.dumps(value, indent=2, default=convert)
+
+
 def _synthetic_clip(frames: int = 16, size: int = 128) -> np.ndarray:
     """Deterministic textured clip that exposes spatial QP differences."""
     rng = np.random.default_rng(20260920)
@@ -96,8 +107,8 @@ def run_f0(args: argparse.Namespace) -> bool:
         "pass": False,
     }
     if not availability:
-        (out / "codec_capability.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-        print(json.dumps(result, indent=2))
+        (out / "codec_capability.json").write_text(_json_text(result), encoding="utf-8")
+        print(_json_text(result))
         return False
 
     clip = _synthetic_clip(size=args.size)
@@ -141,8 +152,8 @@ def run_f0(args: argparse.Namespace) -> bool:
             anchor = encoded["anchor"].reconstruction
             spatial = encoded["spatial_roi"].reconstruction
             global_rec = encoded["global_offset"].reconstruction
-            decoded = all(item.reconstruction.shape == clip.shape for item in encoded.values())
-            changed = (
+            decoded = bool(all(item.reconstruction.shape == clip.shape for item in encoded.values()))
+            changed = bool(
                 encoded["spatial_roi"].coded_bytes != encoded["anchor"].coded_bytes
                 and np.any(spatial != anchor)
                 and np.any(spatial != global_rec)
@@ -151,7 +162,7 @@ def run_f0(args: argparse.Namespace) -> bool:
             inside_global = _mse(clip, global_rec, region_mask)
             outside_spatial = _mse(clip, spatial, ~region_mask)
             outside_anchor = _mse(clip, anchor, ~region_mask)
-            local_direction = (
+            local_direction = bool(
                 inside_spatial <= inside_global * 1.10 and outside_spatial >= outside_anchor * 0.90
             )
             all_decoded &= decoded
@@ -185,9 +196,9 @@ def run_f0(args: argparse.Namespace) -> bool:
             "block_level_direction": all_local,
         }
     )
-    result["pass"] = all(result["checks"].values())
-    (out / "codec_capability.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    print(json.dumps({"F0": result["checks"], "pass": result["pass"]}, indent=2))
+    result["pass"] = bool(all(result["checks"].values()))
+    (out / "codec_capability.json").write_text(_json_text(result), encoding="utf-8")
+    print(_json_text({"F0": result["checks"], "pass": result["pass"]}))
     return bool(result["pass"])
 
 
@@ -369,8 +380,10 @@ def run_d1(args: argparse.Namespace) -> None:
                 **comparison,
                 "matched_global_control": global_name,
                 "global_control_bd_rate_top1_pct": _finite(global_bd),
-                "beats_global_control": (value is not None and np.isfinite(global_bd) and value < global_bd),
-                "passes_local_gate": (
+                "beats_global_control": bool(
+                    value is not None and np.isfinite(global_bd) and value < global_bd
+                ),
+                "passes_local_gate": bool(
                     value is not None
                     and value <= -15.0
                     and comparison["min_crf_top1_gap"] >= -0.05
@@ -408,9 +421,9 @@ def run_d1(args: argparse.Namespace) -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out / "per_clip_records.npz", **flat)
-    (out / "probe_joint_roi.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-    (out / "roi_bit_accounting.json").write_text(json.dumps(accounting, indent=2), encoding="utf-8")
-    print(json.dumps(result["decision"], indent=2))
+    (out / "probe_joint_roi.json").write_text(_json_text(result), encoding="utf-8")
+    (out / "roi_bit_accounting.json").write_text(_json_text(accounting), encoding="utf-8")
+    print(_json_text(result["decision"]))
     print(f"[roi-v3] wrote {out}")
 
 
