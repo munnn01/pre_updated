@@ -33,3 +33,20 @@ def test_notebook_executes_rendered_script_as_bash():
     source = "".join(payload["cells"][0]["source"])
     assert source.startswith("%%bash\nset -euo pipefail\n")
     assert payload["cells"][0]["id"] == "roi-v3-probe"
+
+
+def test_commit_is_resolved_before_notebook_generation():
+    module = _module()
+    resolved = module.resolve_local_commit("HEAD")
+    assert len(resolved) == 40
+    assert all(char in "0123456789abcdef" for char in resolved)
+
+
+def test_unknown_commit_is_rejected():
+    module = _module()
+    try:
+        module.resolve_local_commit("0" * 40)
+    except ValueError as exc:
+        assert "does not resolve locally" in str(exc)
+    else:
+        raise AssertionError("unknown commit was accepted")

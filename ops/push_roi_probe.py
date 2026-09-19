@@ -24,6 +24,20 @@ def kaggle_command() -> list[str]:
     return [sys.executable, "-c", "from kaggle.cli import main; main()"]
 
 
+def resolve_local_commit(ref: str) -> str:
+    """Resolve a local ref to a full commit SHA before generating a notebook."""
+    result = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    resolved = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"[0-9a-f]{40}", resolved):
+        raise ValueError(f"commit does not resolve locally: {ref}")
+    return resolved
+
+
 def render_cell(
     ref: str,
     phase: str,
@@ -130,11 +144,12 @@ def main() -> None:
     parser.add_argument("--write-only", action="store_true")
     parser.add_argument("--allow-active-update", action="store_true")
     args = parser.parse_args()
+    commit = resolve_local_commit(args.commit)
 
     push_dir = REPO / "ops" / "_push" / args.account / args.slug
     push_dir.mkdir(parents=True, exist_ok=True)
     cell = render_cell(
-        args.commit,
+        commit,
         args.phase,
         args.codecs,
         args.eval_backbone,
@@ -145,7 +160,7 @@ def main() -> None:
     (push_dir / "kernel-metadata.json").write_text(
         json.dumps(metadata(args.account, args.slug, args.phase)), encoding="utf-8"
     )
-    print(f"[roi-push] generated {push_dir}")
+    print(f"[roi-push] generated {push_dir} at {commit}")
     if args.write_only:
         return
     handle = f"{args.account}/{args.slug}"

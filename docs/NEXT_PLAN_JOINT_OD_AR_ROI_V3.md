@@ -1,7 +1,7 @@
 # Kế hoạch tiếp theo: V3 codec-native ROI/QP cho OD và Action Recognition
 
 **Tên file chuẩn:** `docs/NEXT_PLAN_JOINT_OD_AR_ROI_V3.md`  
-**Trạng thái:** đã kiểm chứng V2; V3 CRF+AQ đã triển khai, chờ F0 Kaggle
+**Trạng thái:** F0 CRF+AQ PASS; sáu shard AR D1 đã phát và đang chạy
 **Ngày cập nhật protocol:** 2026-09-20
 
 File này là nguồn quyết định duy nhất cho vòng phát triển tiếp theo. Không đổi
@@ -211,6 +211,12 @@ Chỉ dùng 20 clip AR và 20 ảnh OD trên một tài khoản.
 Nếu một codec không qua F0 thì dừng, không phát sáu job. Khi đó mới cân nhắc một
 bridge libavcodec nhỏ; không giả định CLI đã hỗ trợ.
 
+**Kết quả F0 ngày 2026-09-20:** PASS đồng thời cho `libx264` và `libx265` tại
+CRF `30/38/46`. Cả năm check đều đúng: capability, decode không cần side file,
+không có log từ chối ROI, ROI làm đổi bitstream/reconstruction, và kiểm tra
+block-level đi đúng hướng. Kernel:
+`wagur124705/preupd-roi-v3-f0` version 4.
+
 ### Phase D1 — development screen trên validation
 
 Common setting AR: cùng hash split V2, 200 clip, 16 frame, stride 2, size 128.
@@ -275,6 +281,18 @@ F0 chạy một job duy nhất trên `wagur124705`. Chỉ sau khi F0 PASS mới 
 | `shungg05` | AR / H.265 / R3D-18 |
 | `vtk269` | AR / H.265 / MC3-18 |
 | `nguyenhoanglan1232` | AR / H.265 / R2Plus1D-18 |
+
+Sáu kernel D1 đã phát ngày 2026-09-20, mỗi tài khoản đúng một slug và đều dùng
+commit code `df46b4a087a9fd3dce2c6e557e5ea6ea70cd0696`:
+
+| Tài khoản | Kernel D1 |
+|---|---|
+| `wagur124705` | `preupd-roi-v3-d1-h264-r3d` |
+| `htran123456` | `preupd-roi-v3-d1-h264-mc3` |
+| `hoangminhhuy123` | `preupd-roi-v3-d1-h264-r2p1d` |
+| `shungg05` | `preupd-roi-v3-d1-h265-r3d` |
+| `vtk269` | `preupd-roi-v3-d1-h265-mc3` |
+| `nguyenhoanglan1232` | `preupd-roi-v3-d1-h265-r2p1d` |
 
 OD chạy sau AR D1 hoặc ghép vào job chỉ khi ước lượng runtime còn an toàn. Mỗi
 tài khoản chỉ có một kernel V3 hoạt động; trước khi push phải kiểm tra trạng thái
