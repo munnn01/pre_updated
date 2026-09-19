@@ -25,3 +25,11 @@ def test_f0_metadata_does_not_attach_large_dataset():
     module = _module()
     assert module.metadata("wagur124705", "roi-v3-f0", "f0")["dataset_sources"] == []
     assert module.metadata("wagur124705", "roi-v3-f0", "f0")["enable_gpu"] is False
+
+
+def test_notebook_executes_rendered_script_as_bash():
+    module = _module()
+    payload = module.notebook("set -euo pipefail\necho ok\n")
+    source = "".join(payload["cells"][0]["source"])
+    assert source.startswith("%%bash\nset -euo pipefail\n")
+    assert payload["cells"][0]["id"] == "roi-v3-probe"

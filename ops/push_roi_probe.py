@@ -65,14 +65,22 @@ def notebook(cell: str) -> dict:
     return {
         "cells": [
             {
+                "id": "roi-v3-probe",
                 "cell_type": "code",
                 "execution_count": None,
                 "metadata": {},
                 "outputs": [],
-                "source": [line + "\n" for line in cell.splitlines()],
+                "source": ("%%bash\n" + cell).splitlines(keepends=True),
             }
         ],
-        "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
+            },
+            "language_info": {"name": "python"},
+        },
         "nbformat": 4,
         "nbformat_minor": 5,
     }
