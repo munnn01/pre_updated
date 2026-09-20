@@ -16,15 +16,6 @@ def _push_module():
     return module
 
 
-def _warmstart_module():
-    path = Path(__file__).resolve().parents[1] / "ops" / "publish_crc_warmstart.py"
-    spec = importlib.util.spec_from_file_location("publish_crc_warmstart", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_codec_rate_condition_is_explicit_and_legacy_stays_compatible():
     legacy = _rate_cond(0.5, 2, "cpu", torch.float32)
     assert legacy.tolist() == [[0.5], [0.5]]
@@ -75,24 +66,16 @@ def test_rate_constraint_validation_and_cells():
 
 def test_crc_matrix_and_notebook_protocol():
     module = _push_module()
-    assert set(module.ARMS) == {"control", "t0_lr1", "tm5_lr1", "t0_lr5", "tm5_lr5"}
+    assert set(module.ARMS) == {"t0_lr1", "tm5_lr1", "t0_lr5", "tm5_lr5"}
     cell = module.render_cell("a" * 40, "tm5_lr5")
     assert 'ENABLED="true"' in cell
     assert 'TARGET="-0.05"' in cell
     assert 'DUAL_LR="0.005"' in cell
+    assert "configs/qpc_v4_ar.yaml" in cell
+    assert "run_arm control false 0.0 0.0 0.001" in cell
+    assert 'run_arm "$ARM"' in cell
     assert "eval.split=val" in cell and "eval.num_shards=20" in cell
     assert "eval.split=test" not in cell
     assert "timeout " not in cell.lower()
     meta = module.metadata("shungg05", "crc-v5-control")
-    assert meta["dataset_sources"] == [
-        "qktttttttttt/kineticscleaned",
-        "shungg05/qpc-v4-uniform-s1-warmstart",
-    ]
-
-
-def test_warmstart_publisher_rejects_wrong_checkpoint(tmp_path):
-    module = _warmstart_module()
-    wrong = tmp_path / "preprocessor.pth"
-    wrong.write_bytes(b"not the registered checkpoint")
-    with pytest.raises(ValueError, match="SHA mismatch"):
-        module.prepare("shungg05", wrong)
+    assert meta["dataset_sources"] == ["qktttttttttt/kineticscleaned"]

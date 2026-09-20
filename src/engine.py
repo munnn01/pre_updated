@@ -674,9 +674,8 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
             raise ValueError(
                 "loss.rate_constraint requires model.cond_dim=3 ([QP,h264,h265])"
             )
-    rate_duals = {
-        cell: rate_constraint["lambda_init"] for cell in rate_constraint["cells"]
-    }
+    initial_dual = rate_constraint["lambda_init"] if rate_constraint["enabled"] else 0.0
+    rate_duals = {cell: initial_dual for cell in rate_constraint["cells"]}
 
     # Balanced, randomized blocks prevent codec/QP cells from being confounded
     # with fine-tune time or LR drift.  Each block contains all ten cells once.

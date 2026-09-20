@@ -14,9 +14,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "kaggle" / "crc_v5_train_eval_cell.sh"
 KINETICS = "qktttttttttt/kineticscleaned"
-WARMSTART_SLUG = "qpc-v4-uniform-s1-warmstart"
 ARMS = {
-    "control": {"enabled": "false", "target": "0.0", "dual_lr": "0.0", "beta": "0.001"},
     "t0_lr1": {"enabled": "true", "target": "0.0", "dual_lr": "0.001", "beta": "0.0"},
     "tm5_lr1": {"enabled": "true", "target": "-0.05", "dual_lr": "0.001", "beta": "0.0"},
     "t0_lr5": {"enabled": "true", "target": "0.0", "dual_lr": "0.005", "beta": "0.0"},
@@ -93,7 +91,7 @@ def metadata(account: str, slug: str) -> dict:
         "is_private": True,
         "enable_gpu": True,
         "enable_internet": True,
-        "dataset_sources": [KINETICS, f"{account}/{WARMSTART_SLUG}"],
+        "dataset_sources": [KINETICS],
         "kernel_sources": [],
         "competition_sources": [],
         "model_sources": [],

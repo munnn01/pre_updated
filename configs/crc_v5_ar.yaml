@@ -1,9 +1,9 @@
 # CRC-V5 screening: codec-native, rate-constrained fine-tuning of QPC-V4.
 #
-# Five matched jobs form one randomized screening block: one STE control and a
-# 2x2 factorial over {target added-rate 0/-5%} x {dual LR 1e-3/5e-3}.  Every
-# job warm-starts from the same verified QPC-uniform seed-1 checkpoint.  Only
-# loss.rate_constraint differs between arms.
+# Five account-blocked jobs each build a QPC checkpoint locally, then fork that
+# exact checkpoint into an STE control and one constrained treatment.  Across
+# the four unique treatments this is a 2x2 factorial over {target added-rate
+# 0/-5%} x {dual LR 1e-3/5e-3}; one treatment is replicated on a second account.
 device: auto
 out_dir: outputs/crc_v5
 seed: 260920
@@ -19,8 +19,8 @@ model:
   arch: additive_cond
   temporal_frames: 8
   strength: 1.0
-  # [normalised QP, is_h264, is_h265].  The warm-start loader copies the old
-  # QP column and zero-initialises both codec columns.
+  # [normalised QP, is_h264, is_h265].  The warm-start loader copies the local
+  # QPC QP column and zero-initialises both codec columns.
   cond_dim: 3
   gate: false
   qp_ref: [20, 51]
@@ -100,4 +100,3 @@ eval:
   shard_idx: 0
   num_shards: 20
   shard_salt: crc-v5-val-v1
-

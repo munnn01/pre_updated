@@ -9,19 +9,17 @@ TARGET="__TARGET__"
 DUAL_LR="__DUAL_LR__"
 BETA="__BETA__"
 REPO="/tmp/pre_updated"
-OUT="/kaggle/working/outputs/crc_v5_${ARM}"
 INDEX="/kaggle/working/kinetics_hash_split.json"
-EXPECTED_WARM_SHA="20d83d69f8be9e6d7754e07fe3c493e46a0df17d8734954ed7d827e0ec372db2"
+STAGE1="/kaggle/working/outputs/crc_v5_${ARM}_stage1"
 
-mkdir -p "$OUT/checkpoints"
 finish() {
   rc=$?
   trap - EXIT
   set +e
   cd /kaggle/working
-  tar -czf "crc_v5_${ARM}.tgz" outputs kinetics_hash_split.json 2>/dev/null
+  tar -czf "crc_v5_${ARM}_paired.tgz" outputs kinetics_hash_split.json 2>/dev/null
   rm -rf "$REPO"
-  echo "[exit] rc=$rc artifact=/kaggle/working/crc_v5_${ARM}.tgz"
+  echo "[exit] rc=$rc artifact=/kaggle/working/crc_v5_${ARM}_paired.tgz"
   exit "$rc"
 }
 trap finish EXIT
@@ -54,52 +52,70 @@ fi
 python scripts/build_train_index.py \
   --root "$KIN_ROOT" --out "$INDEX" --assert-fingerprint 30f083f8520a
 
-WARM="$(find /kaggle/input -type f -name 'preprocessor.pth' -print -quit || true)"
-if [ -z "$WARM" ]; then
-  echo "ERROR: warm-start dataset lacks preprocessor.pth" >&2
+# Account-local Stage 1. No checkpoint crosses a Kaggle account boundary.
+echo "[stage1] QPC pretrain arm=$ARM seed=$SEED"
+python train.py --config configs/qpc_v4_ar.yaml \
+  data.index="$INDEX" out_dir="$STAGE1" seed="$SEED" \
+  train.epochs=16 train.resume=false train.finetune=false \
+  2>&1 | tee "$STAGE1.log"
+
+STAGE1_CKPT="$STAGE1/checkpoints/preprocessor.pth"
+if [ ! -f "$STAGE1_CKPT" ]; then
+  echo "ERROR: Stage 1 did not produce $STAGE1_CKPT" >&2
   exit 3
 fi
-ACTUAL_WARM_SHA="$(sha256sum "$WARM" | awk '{print $1}')"
-if [ "$ACTUAL_WARM_SHA" != "$EXPECTED_WARM_SHA" ]; then
-  echo "ERROR: warm-start SHA mismatch: $ACTUAL_WARM_SHA" >&2
-  exit 4
-fi
-cp "$WARM" "$OUT/checkpoints/preprocessor.pth"
-echo "[warmstart] $WARM sha256=$ACTUAL_WARM_SHA"
+STAGE1_SHA="$(sha256sum "$STAGE1_CKPT" | awk '{print $1}')"
+echo "[stage1] checkpoint=$STAGE1_CKPT sha256=$STAGE1_SHA"
 
-echo "[train] arm=$ARM enabled=$ENABLED target=$TARGET dual_lr=$DUAL_LR beta=$BETA"
-python train.py --config configs/crc_v5_ar.yaml \
-  data.index="$INDEX" out_dir="$OUT" seed="$SEED" \
-  loss.beta="$BETA" loss.rate_constraint.enabled="$ENABLED" \
-  loss.rate_constraint.target_ratio="$TARGET" \
-  loss.rate_constraint.dual_lr="$DUAL_LR" \
-  2>&1 | tee "$OUT/train.log"
+run_arm() {
+  local run_arm="$1"
+  local enabled="$2"
+  local target="$3"
+  local dual_lr="$4"
+  local beta="$5"
+  local out="/kaggle/working/outputs/crc_v5_${ARM}_${run_arm}"
+  local eval_out="$out/eval_val0of20"
 
-CKPT="$OUT/checkpoints/preprocessor.pth"
-python - "$CKPT" "$ARM" <<'PY'
+  mkdir -p "$out/checkpoints"
+  cp "$STAGE1_CKPT" "$out/checkpoints/preprocessor.pth"
+  echo "[train] block=$ARM run_arm=$run_arm enabled=$enabled target=$target dual_lr=$dual_lr beta=$beta"
+  python train.py --config configs/crc_v5_ar.yaml \
+    data.index="$INDEX" out_dir="$out" seed="$SEED" \
+    loss.beta="$beta" loss.rate_constraint.enabled="$enabled" \
+    loss.rate_constraint.target_ratio="$target" \
+    loss.rate_constraint.dual_lr="$dual_lr" \
+    2>&1 | tee "$out/train.log"
+
+  local ckpt="$out/checkpoints/preprocessor.pth"
+  python - "$ckpt" "$run_arm" "$STAGE1_SHA" <<'PY'
 import json
 import math
 import sys
 import torch
 
-path, arm = sys.argv[1:]
+path, arm, source_sha = sys.argv[1:]
 state = torch.load(path, map_location="cpu")
 cfg = state["cfg"]
 assert cfg["model"]["cond_dim"] == 3
 assert cfg["codec"]["kind"] == "ste" and cfg["codec"]["ste_alternate"] is True
 assert state["global_step"] == 500, state["global_step"]
 assert all(math.isfinite(float(v)) for v in state.get("rate_duals", {}).values())
-print("[checkpoint]", arm, "step=", state["global_step"], "duals=", json.dumps(state.get("rate_duals", {}), sort_keys=True))
+print("[checkpoint]", arm, "step=", state["global_step"], "source_sha=", source_sha,
+      "duals=", json.dumps(state.get("rate_duals", {}), sort_keys=True))
 PY
 
-EVAL_OUT="$OUT/eval_val0of20"
-python evaluate.py --config configs/crc_v5_ar.yaml \
-  --ckpt "$CKPT" --out "$EVAL_OUT" \
-  data.index="$INDEX" eval.split=val \
-  eval.shard_idx=0 eval.num_shards=20 eval.shard_salt=crc-v5-val-v1 \
-  eval.per_sequence=true eval.include_proxy=false \
-  eval.held_out_backbone=r2plus1d_18 \
-  2>&1 | tee "$EVAL_OUT.log"
+  python evaluate.py --config configs/crc_v5_ar.yaml \
+    --ckpt "$ckpt" --out "$eval_out" \
+    data.index="$INDEX" eval.split=val \
+    eval.shard_idx=0 eval.num_shards=20 eval.shard_salt=crc-v5-val-v1 \
+    eval.per_sequence=true eval.include_proxy=false \
+    eval.held_out_backbone=r2plus1d_18 \
+    2>&1 | tee "$eval_out.log"
+  echo "[done-arm] $run_arm result=$eval_out/results.json"
+}
 
-echo "[done] arm=$ARM result=$EVAL_OUT/results.json"
+# Within-account paired control: exact same Stage-1 bytes and calibration data.
+run_arm control false 0.0 0.0 0.001
+run_arm "$ARM" "$ENABLED" "$TARGET" "$DUAL_LR" "$BETA"
 
+echo "[done] paired block=$ARM control+${ARM}"
