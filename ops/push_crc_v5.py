@@ -31,7 +31,16 @@ def kaggle_command() -> list[str]:
 
 def resolve_local_commit(ref: str) -> str:
     result = subprocess.run(
-        ["git", "-C", str(REPO), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        [
+            "git",
+            "-c",
+            f"safe.directory={REPO.as_posix()}",
+            "-C",
+            str(REPO),
+            "rev-parse",
+            "--verify",
+            f"{ref}^{{commit}}",
+        ],
         capture_output=True,
         text=True,
         check=False,
