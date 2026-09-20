@@ -86,6 +86,7 @@ python evaluate.py --config configs/qpc_v4_ar.yaml \
   --ckpt "$CKPT" --out "$OUT" \
   data.index="$INDEX" eval.split=val \
   eval.shard_idx="$SHARD_IDX" eval.num_shards="$NUM_SHARDS" \
+  eval.shard_salt=qpc-v4-val-v1 \
   eval.per_sequence=true eval.include_proxy=false \
   eval.held_out_backbone=r2plus1d_18 \
   2>&1 | tee "$OUT/eval.log"

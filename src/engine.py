@@ -995,6 +995,7 @@ def _apply_eval_shard(ds, ev: dict):
 
     shard_idx = ev.get("shard_idx", None)
     num_shards = int(ev.get("num_shards", 1) or 1)
+    shard_salt = str(ev.get("shard_salt", "") or "")
     if shard_idx is None or num_shards <= 1:
         return
     shard_idx = int(shard_idx)
@@ -1007,10 +1008,22 @@ def _apply_eval_shard(ds, ev: dict):
 
     keep = []
     for s in ds.samples:
-        h = int(hashlib.md5(_clip_key(s["path"]).encode("utf-8")).hexdigest()[:8], 16)
+        key = _clip_key(s["path"])
+        # The canonical train/val/test split already uses md5(key) % 10.
+        # Reusing that exact hash for eval sharding can create empty shards
+        # whenever num_shards shares a factor with 10 (e.g. val is remainder
+        # 1, so every val item is also remainder 1 modulo 5). An explicit salt
+        # makes the sharding hash independent while preserving legacy behavior
+        # for historical configs that do not set eval.shard_salt.
+        shard_key = f"{shard_salt}:{key}" if shard_salt else key
+        h = int(hashlib.md5(shard_key.encode("utf-8")).hexdigest()[:8], 16)
         if h % num_shards == shard_idx:
             keep.append(s)
-    print(f"[eval] shard {shard_idx}/{num_shards}: {len(keep)}/{len(ds.samples)} sequences")
+    salt_note = f" salt={shard_salt}" if shard_salt else ""
+    print(
+        f"[eval] shard {shard_idx}/{num_shards}{salt_note}: "
+        f"{len(keep)}/{len(ds.samples)} sequences"
+    )
     ds.samples = keep
 
 

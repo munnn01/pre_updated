@@ -19,6 +19,7 @@ def test_eval_cell_is_validation_only_and_uses_fixed_subsplit():
     assert 'SEED="2"' in cell
     assert "eval.split=val" in cell
     assert 'SHARD_IDX="0"' in cell and 'NUM_SHARDS="5"' in cell
+    assert "eval.shard_salt=qpc-v4-val-v1" in cell
     assert "eval.per_sequence=true" in cell
     assert "eval.held_out_backbone=r2plus1d_18" in cell
     assert "eval.split=test" not in cell

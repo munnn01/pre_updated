@@ -77,10 +77,14 @@ Important limitations:
 ## Frozen real-codec screen
 
 Evaluate control and uniform QPC, seeds 0/1/2, on `eval.split=val`, deterministic
-hash shard `0/5` (about 200 clips), held-out R2Plus1D-18, real x264/x265 preset
-medium, QP `[30,35,40,45,50]`, with per-sequence records. The six jobs use the
-exact best checkpoints above. BD-weighted is not advanced because uniform was
-selected by the preregistered proxy criterion.
+salted hash shard `0/5` (about 200 clips), held-out R2Plus1D-18, real x264/x265
+preset medium, QP `[30,35,40,45,50]`, with per-sequence records. The salt
+`qpc-v4-val-v1` is mandatory because the canonical val split already uses
+`md5(key) % 10 == 1`; reusing the unsalted hash modulo 5 makes shard 0 empty.
+The first dispatch exposed exactly this zero-sample condition and is excluded
+as an infrastructure failure. The six corrected jobs use the exact best
+checkpoints above. BD-weighted is not advanced because uniform was selected by
+the preregistered proxy criterion.
 
 Continue to the untouched 1,159-clip test only if uniform QPC improves the
 three-seed median over retrained control by at least one BD-rate percentage
