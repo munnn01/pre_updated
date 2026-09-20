@@ -37,15 +37,16 @@ def test_stage1_publisher_validates_lineage(tmp_path):
         module.validate_checkpoint(ckpt, "t0_lr1", 260920)
 
 
-def test_stage2_notebook_is_stage2_only_and_hash_pinned():
+def test_recovery_notebook_runs_stage2_stage3_eval_and_is_hash_pinned():
     module = _module("push_crc_v5_stage2")
     sha = "a" * 64
     cell = module.render_cell("b" * 40, "tm5_lr1", sha)
     assert f'EXPECTED_SHA="{sha}"' in cell
     assert "configs/qpc_v4_ar.yaml" not in cell
     assert "configs/crc_v5_ar.yaml" in cell
-    assert "run_arm control false 0.0 0.0 0.001" in cell
-    assert 'run_arm "$ARM"' in cell
+    assert "run_arm stage2 control false 0.0 0.0 0.001" in cell
+    assert 'run_arm stage3 "$ARM"' in cell
+    assert '[${stage}-eval] real-codec validation' in cell
     assert "eval.split=test" not in cell
     assert "timeout " not in cell.lower()
 
@@ -57,4 +58,3 @@ def test_stage2_metadata_keeps_dataset_in_same_account():
         "qktttttttttt/kineticscleaned",
         "huolgggnuyen/private-stage1",
     ]
-

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Push CRC-V5 Stage-2-only paired jobs from an account-local private dataset."""
+"""Push CRC-V5 Stage-2/Stage-3 paired jobs from a private Stage-1 dataset."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def render_cell(ref: str, arm: str, expected_sha: str, seed: int = 260920) -> st
 def notebook(cell: str) -> dict:
     return {
         "cells": [{
-            "id": "crc-v5-stage2-only",
+            "id": "crc-v5-stage2-stage3-eval",
             "cell_type": "code",
             "execution_count": None,
             "metadata": {},
@@ -127,7 +127,7 @@ def main() -> None:
         json.dumps(metadata(args.account, args.slug, args.dataset_slug)),
         encoding="utf-8",
     )
-    print(f"[crc-stage2-push] generated {push_dir} at {commit}")
+    print(f"[crc-stage2-3-push] generated {push_dir} at {commit}")
     if args.write_only:
         return
     command = kaggle_command() + ["kernels", "push", "-p", str(push_dir)]
@@ -135,10 +135,9 @@ def main() -> None:
         command += ["--timeout", str(args.timeout)]
     if args.accelerator:
         command += ["--accelerator", args.accelerator]
-    print(f"[crc-stage2-push] pushing {args.account}/{args.slug}")
+    print(f"[crc-stage2-3-push] pushing {args.account}/{args.slug}")
     raise SystemExit(subprocess.run(command, text=True).returncode)
 
 
 if __name__ == "__main__":
     main()
-

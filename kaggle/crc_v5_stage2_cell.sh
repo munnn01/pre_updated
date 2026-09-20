@@ -65,16 +65,18 @@ fi
 echo "[stage2] checkpoint=$STAGE1_CKPT sha256=$ACTUAL_SHA"
 
 run_arm() {
-  local run_arm="$1"
-  local enabled="$2"
-  local target="$3"
-  local dual_lr="$4"
-  local beta="$5"
+  local stage="$1"
+  local run_arm="$2"
+  local enabled="$3"
+  local target="$4"
+  local dual_lr="$5"
+  local beta="$6"
   local out="/kaggle/working/outputs/crc_v5_stage2_${ARM}_${run_arm}"
   local eval_out="$out/eval_val0of20"
 
   mkdir -p "$out/checkpoints"
   cp "$STAGE1_CKPT" "$out/checkpoints/preprocessor.pth"
+  echo "[$stage] train block=$ARM run_arm=$run_arm enabled=$enabled target=$target dual_lr=$dual_lr beta=$beta"
   python train.py --config configs/crc_v5_ar.yaml \
     data.index="$INDEX" out_dir="$out" seed="$SEED" \
     loss.beta="$beta" loss.rate_constraint.enabled="$enabled" \
@@ -83,6 +85,7 @@ run_arm() {
     2>&1 | tee "$out/train.log"
 
   local ckpt="$out/checkpoints/preprocessor.pth"
+  echo "[${stage}-eval] real-codec validation block=$ARM run_arm=$run_arm"
   python evaluate.py --config configs/crc_v5_ar.yaml \
     --ckpt "$ckpt" --out "$eval_out" \
     data.index="$INDEX" eval.split=val \
@@ -90,10 +93,12 @@ run_arm() {
     eval.per_sequence=true eval.include_proxy=false \
     eval.held_out_backbone=r2plus1d_18 \
     2>&1 | tee "$eval_out.log"
-  echo "[done-arm] $run_arm result=$eval_out/results.json"
+  echo "[done-$stage] $run_arm result=$eval_out/results.json"
 }
 
-run_arm control false 0.0 0.0 0.001
-run_arm "$ARM" "$ENABLED" "$TARGET" "$DUAL_LR" "$BETA"
-echo "[done] private-dataset Stage-2 block=$ARM"
-
+# Stage 2 is the fixed-beta STE control. Stage 3 is the registered constrained
+# treatment. Both fork the exact same immutable Stage-1 bytes and both are
+# evaluated immediately with real H.264/H.265 on the same held-out shard.
+run_arm stage2 control false 0.0 0.0 0.001
+run_arm stage3 "$ARM" "$ENABLED" "$TARGET" "$DUAL_LR" "$BETA"
+echo "[done] private-dataset Stage-2 + Stage-3 + eval block=$ARM"
