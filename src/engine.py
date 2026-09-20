@@ -35,6 +35,7 @@ same-codec BD-Rate. Proxy curves are optional diagnostics
 from __future__ import annotations
 
 import json
+import math
 import random
 from dataclasses import replace
 from pathlib import Path
@@ -413,6 +414,31 @@ def _training_codec_setup(tr: dict, codec: CompressAICodec):
     return qp_list, qp_to_quality
 
 
+def _qp_sampling_weights(tr: dict, qp_list: list[int]) -> list[float] | None:
+    """Validate and normalise optional per-QP training probabilities.
+
+    Validation still evaluates every QP equally. This option only changes how
+    often each rate point contributes a training gradient, allowing a clean
+    uniform-vs-BD-weighted QP-conditioning comparison.
+    """
+    raw = tr.get("qp_sampling_weights")
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or len(raw) != len(qp_list):
+        raise ValueError(
+            "train.qp_sampling_weights must be a list aligned with train.qp_list"
+        )
+    weights = [float(value) for value in raw]
+    if any(not math.isfinite(value) or value < 0.0 for value in weights):
+        raise ValueError(
+            "train.qp_sampling_weights must be finite and non-negative"
+        )
+    total = sum(weights)
+    if total <= 0.0:
+        raise ValueError("train.qp_sampling_weights must contain a positive value")
+    return [value / total for value in weights]
+
+
 def _loss_weights(cfg: dict) -> LossWeights:
     """Build every configured loss weight in one auditable place.
 
@@ -559,6 +585,7 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
     # Zhao loss has no bounded-edit envelope, so this is the safety net).
     clip_grad = float(tr.get("clip_grad", 0.0))
     qp_list, qp_to_quality = _training_codec_setup(tr, codec)
+    qp_sampling = _qp_sampling_weights(tr, qp_list)
 
     total_steps = len(train_loader) * epochs
     if max_steps:
@@ -629,6 +656,8 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
     print(f"[train] {tag} | {n_train} clips | {len(train_loader)} steps/epoch | "
           f"val={'yes' if val_loader else 'none'} | cosine={use_cosine} | "
           f"patience={patience or 'off'} | device={device}", flush=True)
+    sampling_log = dict(zip(qp_list, qp_sampling)) if qp_sampling else "uniform"
+    print(f"[train] QP sampling: {sampling_log}", flush=True)
     tracker = make_tracker(Path(cfg.get("out_dir", "outputs")),
                            fallback_name=f"{tag}-seed{cfg.get('seed', 0)}")
     tracker.log_params({"tag": tag, "n_train": n_train, "total_steps": total_steps,
@@ -655,7 +684,11 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
             warm = 1.0 if warmup_steps == 0 else min(1.0, step / warmup_steps)
             step_w = replace(weights, beta=weights.beta * warm,
                              gamma=weights.gamma * warm, delta=weights.delta * warm)
-            qp = random.choice(qp_list)
+            qp = (
+                random.choices(qp_list, weights=qp_sampling, k=1)[0]
+                if qp_sampling is not None
+                else random.choice(qp_list)
+            )
             # v9 per-codec: alternate the REAL codec each step so the
             # codec-conditioned POST sees BOTH artifact families (a single
             # codec would drift the shared trunk and leave the other

@@ -32,14 +32,14 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config import apply_overrides, load_config  # noqa: E402
 from src.data.video_dataset import VideoClipDataset  # noqa: E402
+from src.models.additive import AdditivePreprocessor  # noqa: E402
 from src.models.additive_cond import AdditiveCondPreprocessor  # noqa: E402
 
-QP30_NORM = 0.303   # (30-20)/(51-20)
-QP50_NORM = 0.645   # (50-20)/(51-20)
-TWIN_NOISE = 0.03   # edit-level twin RMS noise (rep1), ±3%
-NO_BLOWUP = 0.14    # registered threshold; incumbent reads 0.1202
+QP30_NORM = 0.303  # (30-20)/(51-20)
+QP50_NORM = 0.645  # (50-20)/(51-20)
+TWIN_NOISE = 0.03  # edit-level twin RMS noise (rep1), ±3%
+NO_BLOWUP = 0.14  # registered threshold; incumbent reads 0.1202
 REGIME_LO, REGIME_HI = -0.05, 0.30
 
 
@@ -64,24 +64,53 @@ def edit_rms(x: torch.Tensor, y: torch.Tensor) -> float:
     return (y - x).pow(2).mean().sqrt().item()
 
 
-def run_gates(ckpt: str, index: str, n_clips: int, strengths=(1.0, 0.25)) -> dict:
-    state = torch.load(ckpt, map_location="cpu")
-    model_state = state["model"] if "model" in state else state
+def _build_audit_model(state: dict) -> torch.nn.Module:
+    """Rebuild either the matched additive control or QP-conditioned arm."""
     cfg_model = (state.get("cfg") or {}).get("model", {})
-    pre = AdditiveCondPreprocessor(
-        temporal_frames=int(cfg_model.get("temporal_frames", 8)),
-        strength=1.0,  # strengths applied per-run below
-        cond_dim=int(cfg_model.get("cond_dim", 1)),
-    )
+    arch = str(cfg_model.get("arch", "additive_cond"))
+    common = {
+        "temporal_frames": int(cfg_model.get("temporal_frames", 8)),
+        "strength": 1.0,
+    }
+    if arch == "additive":
+        return AdditivePreprocessor(**common)
+    if arch == "additive_cond":
+        return AdditiveCondPreprocessor(**common, cond_dim=int(cfg_model.get("cond_dim", 1)))
+    raise ValueError(f"QPC audit does not support model.arch={arch!r}")
+
+
+def _overall_pass(model_arch: str, regime: bool, utilized: bool, stable: bool) -> bool:
+    """Require behavioral conditioning only for the conditioned QPC arms."""
+    return bool(regime and stable and (utilized or model_arch != "additive_cond"))
+
+
+def run_gates(
+    ckpt: str,
+    index: str,
+    n_clips: int,
+    strengths=(1.0, 0.25),
+    *,
+    split: str = "val",
+) -> dict:
+    state = torch.load(ckpt, map_location="cpu")
+    model_state = state.get("model", state)
+    pre = _build_audit_model(state)
     pre.load_state_dict(model_state, strict=True)
     pre.eval()
 
-    ds = VideoClipDataset(index_json=index, split="test", num_frames=16,
-                          frame_size=128, temporal_stride=2, train=False)
+    ds = VideoClipDataset(
+        index_json=index, split=split, num_frames=16, frame_size=128, temporal_stride=2, train=False
+    )
     rng = np.random.RandomState(0)
     idx = rng.choice(len(ds), size=min(n_clips, len(ds)), replace=False)
 
-    report = {"n_clips": int(len(idx)), "per_cond": {}, "gates": {}}
+    report = {
+        "n_clips": int(len(idx)),
+        "split": split,
+        "model_arch": (state.get("cfg") or {}).get("model", {}).get("arch", "additive_cond"),
+        "per_cond": {},
+        "gates": {},
+    }
     with torch.no_grad():
         for cond_name, cond_val in (("QP30", QP30_NORM), ("QP50", QP50_NORM)):
             for s in strengths:
@@ -135,14 +164,25 @@ def run_gates(ckpt: str, index: str, n_clips: int, strengths=(1.0, 0.25)) -> dic
 
     # FiLM utilization audit (guard (ii))
     gamma_beta = {}
-    for cond_name, cond_val in (("QP30", QP30_NORM), ("QP50", QP50_NORM)):
-        with torch.no_grad():
-            c = torch.tensor([[cond_val]])
-            g, b = pre.film(c).chunk(2, dim=1)
-        gamma_beta[cond_name] = {
-            "gamma_norm": float(g.norm()), "beta_norm": float(b.norm()),
-        }
-    report["film_utilization"] = gamma_beta
+    if hasattr(pre, "film"):
+        for cond_name, cond_val in (("QP30", QP30_NORM), ("QP50", QP50_NORM)):
+            with torch.no_grad():
+                c = torch.tensor([[cond_val]])
+                g, b = pre.film(c).chunk(2, dim=1)
+            gamma_beta[cond_name] = {
+                "gamma_norm": float(g.norm()),
+                "beta_norm": float(b.norm()),
+            }
+    report["film_utilization"] = gamma_beta or None
+    report["gates"]["overall"] = {
+        "requires_conditioning": report["model_arch"] == "additive_cond",
+        "pass": _overall_pass(
+            str(report["model_arch"]),
+            report["gates"]["1_regime"]["pass"],
+            report["gates"]["2_conditionability"]["utilized"],
+            report["gates"]["3_no_blowup"]["pass"],
+        ),
+    }
     return report
 
 
@@ -151,31 +191,43 @@ def main():
     a.add_argument("--ckpt", required=True)
     a.add_argument("--index", required=True)
     a.add_argument("--n-clips", type=int, default=32)
+    a.add_argument("--split", choices=["train", "val"], default="val")
     a.add_argument("--out", default=None)
     args = a.parse_args()
 
-    report = run_gates(args.ckpt, args.index, args.n_clips)
+    report = run_gates(args.ckpt, args.index, args.n_clips, split=args.split)
     if args.out:
         Path(args.out).write_text(json.dumps(report, indent=2))
 
     print(f"\n=== ROUND (b) GATES ({report['n_clips']} clips) ===")
     g1 = report["gates"]["1_regime"]
-    print(f"[Gate 1 regime] added-HF @s=0.25: QP30 {g1['values']['QP30_s0.25']:+.1%}  "
-          f"QP50 {g1['values']['QP50_s0.25']:+.1%}  band [{REGIME_LO:+.0%},{REGIME_HI:+.0%}]"
-          f"  -> {'PASS' if g1['pass'] else 'FAIL'}")
+    print(
+        f"[Gate 1 regime] added-HF @s=0.25: QP30 {g1['values']['QP30_s0.25']:+.1%}  "
+        f"QP50 {g1['values']['QP50_s0.25']:+.1%}  band [{REGIME_LO:+.0%},{REGIME_HI:+.0%}]"
+        f"  -> {'PASS' if g1['pass'] else 'FAIL'}"
+    )
     g2 = report["gates"]["2_conditionability"]
-    print(f"[Gate 2 conditionability] HF spread {g2['hf_spread_pct']:+.1%}  "
-          f"RMS spread {g2['rms_spread_pct']:+.1%}  (twin noise ±{TWIN_NOISE:.0%})  "
-          f"-> {'UTILIZED' if g2['utilized'] else 'NULL (conditioning unused)'}")
+    print(
+        f"[Gate 2 conditionability] HF spread {g2['hf_spread_pct']:+.1%}  "
+        f"RMS spread {g2['rms_spread_pct']:+.1%}  (twin noise ±{TWIN_NOISE:.0%})  "
+        f"-> {'UTILIZED' if g2['utilized'] else 'NULL (conditioning unused)'}"
+    )
     g3 = report["gates"]["3_no_blowup"]
-    print(f"[Gate 3 no-blow-up] RMS @s=1.0 {g3['rms_s1_mean']:.4f} "
-          f"(threshold {g3['threshold']}, incumbent ref {g3['incumbent_reference']})"
-          f"  -> {'PASS' if g3['pass'] else 'FAIL'}")
+    print(
+        f"[Gate 3 no-blow-up] RMS @s=1.0 {g3['rms_s1_mean']:.4f} "
+        f"(threshold {g3['threshold']}, incumbent ref {g3['incumbent_reference']})"
+        f"  -> {'PASS' if g3['pass'] else 'FAIL'}"
+    )
     fu = report["film_utilization"]
-    print(f"[FiLM audit] QP30 ||γ||={fu['QP30']['gamma_norm']:.4f} ||β||={fu['QP30']['beta_norm']:.4f} | "
-          f"QP50 ||γ||={fu['QP50']['gamma_norm']:.4f} ||β||={fu['QP50']['beta_norm']:.4f}")
+    if fu:
+        print(
+            f"[FiLM audit] QP30 ||γ||={fu['QP30']['gamma_norm']:.4f} ||β||={fu['QP30']['beta_norm']:.4f} | "
+            f"QP50 ||γ||={fu['QP50']['gamma_norm']:.4f} ||β||={fu['QP50']['beta_norm']:.4f}"
+        )
+    else:
+        print("[FiLM audit] matched unconditioned control (no FiLM parameters)")
 
-    ok = g1["pass"] and g3["pass"]
+    ok = report["gates"]["overall"]["pass"]
     print(f"\nOVERALL: {'PASS -> proceed to eval' if ok else 'FAIL -> NO EVAL'}")
     sys.exit(0 if ok else 1)
 
