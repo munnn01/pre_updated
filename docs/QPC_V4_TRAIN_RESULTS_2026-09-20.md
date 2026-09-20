@@ -1,5 +1,8 @@
 # QPC-V4 training results and real-codec validation decision (2026-09-20)
 
+> Final status: the corrected real-codec validation completed and QPC did not
+> pass its continuation gate. See `QPC_V4_REAL_CODEC_RESULTS_2026-09-20.md`.
+
 ## Outcome
 
 All nine matched training jobs completed successfully. The mechanism gate is
