@@ -1,0 +1,63 @@
+# DCTP-V6 validation screen: fixed structural rate projection over a canonical
+# QPC warm start. No training is run; model knobs are checkpointed per arm.
+device: auto
+out_dir: outputs/dctp_v6
+seed: 220921
+
+task:
+  name: action_recognition
+  clip_size: 112
+  teachers: [r3d_18, mc3_18]
+  teacher_sampling: sample
+  backbone: r3d_18
+
+model:
+  arch: additive_dct
+  temporal_frames: 8
+  strength: 1.0
+  cond_dim: 3
+  residual_scale: 0.0
+  dct_strength: 1.0
+  dct_threshold: 1.0
+  dct_softness: 0.25
+  dct_block: 8
+  dct_band_start: 4
+  temporal_strength: 0.0
+  motion_tau: 0.05
+  qp_slope: 0.65
+  h264_scale: 1.0
+  h265_scale: 1.0
+  gate: false
+  qp_ref: [20, 51]
+
+codec:
+  kind: virtual
+  qualities: [1, 2, 3, 5, 8]
+  block: 8
+  inter: true
+  colorspace: yuv420
+  chroma_step_scale: 2.0
+  step_coarse: 0.25
+  step_fine: 0.03
+
+data:
+  index: data/index/kinetics_hash_split.json
+  num_frames: 16
+  frame_size: 128
+  temporal_stride: 2
+
+loss:
+  use_task_mask: false
+
+eval:
+  split: val
+  include_proxy: false
+  per_sequence: true
+  batch_size: 2
+  num_workers: 2
+  held_out_backbone: r2plus1d_18
+  qp_list: [30, 35, 40, 45, 50]
+  preset: medium
+  shard_idx: 0
+  num_shards: 10
+  shard_salt: dctp-v6-screen-v1

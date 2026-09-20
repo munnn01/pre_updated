@@ -20,6 +20,9 @@ lose no more than 0.05 absolute Top-1 at any QP against its raw-codec anchor.
 
 All five accounts receive the exact same immutable `dieulinhh` Stage-1 file
 (SHA-256 `a2ad614b874d756db4b5db5fb2a0cefbae300353ed3044a3c27652d0f1b0e5f2`).
+The owner explicitly published it as the public Kaggle dataset
+`dieulinhh/crc-v5-t0-lr1-stage1-v1`, so every job mounts the same handle rather
+than copying private data between accounts.
 Within each account, both branches start from those same bytes:
 
 - control: fixed `beta=0.001` STE calibration;

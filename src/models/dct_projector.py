@@ -146,8 +146,14 @@ class DCTProjectedAdditivePreprocessor(AdditiveCondPreprocessor):
         if cond is None:
             cond = x.new_zeros(x.shape[0], self.cond_dim)
             cond[:, 1] = 1.0
-        edited = super().forward(x, cond, mask=mask)
-        candidate = x + self.residual_scale * (edited - x)
+        if self.residual_scale == 0.0:
+            # Half of the factorial is a purely structural subtractive arm.
+            # Skipping the semantic trunk makes those arms independent of its
+            # weights and avoids spending GPU time on an output multiplied by 0.
+            candidate = x
+        else:
+            edited = super().forward(x, cond, mask=mask)
+            candidate = x + self.residual_scale * (edited - x)
         b, c, t, h, w = candidate.shape
         frames = candidate.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
         spatial_strength = self._conditioned_strength(cond, self.dct_strength)

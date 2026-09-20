@@ -32,3 +32,11 @@ def test_crossover_dataset_is_account_local_copy() -> None:
         "qktttttttttt/kineticscleaned",
         "shungg05/canonical-dieulinh",
     ]
+
+
+def test_crossover_accepts_public_cross_account_checkpoint() -> None:
+    module = _module()
+    meta = module.metadata(
+        "shungg05", "cross", "dieulinhh/crc-v5-t0-lr1-stage1-v1"
+    )
+    assert meta["dataset_sources"][1] == "dieulinhh/crc-v5-t0-lr1-stage1-v1"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Push the canonical dieulinhh Stage-1 x t0_lr5 crossover experiment."""
+"""Push the eight-arm DCTP-V6 factorial validation screen."""
 
 from __future__ import annotations
 
@@ -12,8 +12,19 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-TEMPLATE = REPO / "kaggle" / "crc_v6_crossover_cell.sh"
+TEMPLATE = REPO / "kaggle" / "dctp_v6_cell.sh"
 KINETICS = "qktttttttttt/kineticscleaned"
+CANONICAL = "dieulinhh/crc-v5-t0-lr1-stage1-v1"
+ARMS = {
+    "r25_d10_t0": {"residual": 0.25, "dct": 1.0, "temporal": 0.0},
+    "r25_d06_t0": {"residual": 0.25, "dct": 0.6, "temporal": 0.0},
+    "r0_d06_t35": {"residual": 0.0, "dct": 0.6, "temporal": 0.35},
+    "r0_d10_t0": {"residual": 0.0, "dct": 1.0, "temporal": 0.0},
+    "r0_d06_t0": {"residual": 0.0, "dct": 0.6, "temporal": 0.0},
+    "r25_d06_t35": {"residual": 0.25, "dct": 0.6, "temporal": 0.35},
+    "r0_d10_t35": {"residual": 0.0, "dct": 1.0, "temporal": 0.35},
+    "r25_d10_t35": {"residual": 0.25, "dct": 1.0, "temporal": 0.35},
+}
 
 
 def kaggle_command() -> list[str]:
@@ -37,15 +48,21 @@ def resolve_local_commit(ref: str) -> str:
     return resolved
 
 
-def render_cell(ref: str, expected_sha: str, seed: int = 260920) -> str:
+def render_cell(ref: str, arm: str, expected_sha: str) -> str:
+    if arm not in ARMS:
+        raise ValueError(f"arm must be one of {sorted(ARMS)}")
     if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
         raise ValueError("expected_sha must be a lowercase SHA-256")
-    cell = TEMPLATE.read_text(encoding="utf-8")
-    for source, target in {
+    values = {
         "__REF__": ref,
+        "__ARM__": arm,
         "__EXPECTED_SHA__": expected_sha,
-        "__SEED__": str(seed),
-    }.items():
+        "__RESIDUAL__": str(ARMS[arm]["residual"]),
+        "__DCT__": str(ARMS[arm]["dct"]),
+        "__TEMPORAL__": str(ARMS[arm]["temporal"]),
+    }
+    cell = TEMPLATE.read_text(encoding="utf-8")
+    for source, target in values.items():
         cell = cell.replace(source, target)
     return cell
 
@@ -53,7 +70,7 @@ def render_cell(ref: str, expected_sha: str, seed: int = 260920) -> str:
 def notebook(cell: str) -> dict:
     return {
         "cells": [{
-            "id": "crc-v6-dieulinh-crossover",
+            "id": "dctp-v6-screen",
             "cell_type": "code",
             "execution_count": None,
             "metadata": {},
@@ -69,8 +86,7 @@ def notebook(cell: str) -> dict:
     }
 
 
-def metadata(account: str, slug: str, dataset_slug: str) -> dict:
-    dataset_handle = dataset_slug if "/" in dataset_slug else f"{account}/{dataset_slug}"
+def metadata(account: str, slug: str) -> dict:
     return {
         "id": f"{account}/{slug}",
         "title": slug,
@@ -80,7 +96,7 @@ def metadata(account: str, slug: str, dataset_slug: str) -> dict:
         "is_private": True,
         "enable_gpu": True,
         "enable_internet": True,
-        "dataset_sources": [KINETICS, dataset_handle],
+        "dataset_sources": [KINETICS, CANONICAL],
         "kernel_sources": [],
         "competition_sources": [],
         "model_sources": [],
@@ -92,9 +108,8 @@ def main() -> None:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--account", required=True)
     parser.add_argument("--slug", required=True)
-    parser.add_argument("--dataset-slug", required=True)
+    parser.add_argument("--arm", choices=sorted(ARMS), required=True)
     parser.add_argument("--expected-sha", required=True)
-    parser.add_argument("--seed", type=int, default=260920)
     parser.add_argument("--accelerator", default="NvidiaTeslaT4")
     parser.add_argument("--timeout", type=int, default=0)
     parser.add_argument("--write-only", action="store_true")
@@ -104,14 +119,13 @@ def main() -> None:
     push_dir = REPO / "ops" / "_push" / args.account / args.slug
     push_dir.mkdir(parents=True, exist_ok=True)
     (push_dir / "notebook.ipynb").write_text(
-        json.dumps(notebook(render_cell(commit, args.expected_sha, args.seed))),
+        json.dumps(notebook(render_cell(commit, args.arm, args.expected_sha))),
         encoding="utf-8",
     )
     (push_dir / "kernel-metadata.json").write_text(
-        json.dumps(metadata(args.account, args.slug, args.dataset_slug)),
-        encoding="utf-8",
+        json.dumps(metadata(args.account, args.slug)), encoding="utf-8"
     )
-    print(f"[crc-v6-push] generated {push_dir} at {commit}")
+    print(f"[dctp-v6-push] generated {push_dir} at {commit}")
     if args.write_only:
         return
     command = kaggle_command() + ["kernels", "push", "-p", str(push_dir)]
@@ -119,7 +133,7 @@ def main() -> None:
         command += ["--timeout", str(args.timeout)]
     if args.accelerator:
         command += ["--accelerator", args.accelerator]
-    print(f"[crc-v6-push] pushing {args.account}/{args.slug}")
+    print(f"[dctp-v6-push] pushing {args.account}/{args.slug}")
     raise SystemExit(subprocess.run(command, text=True).returncode)
 
 
