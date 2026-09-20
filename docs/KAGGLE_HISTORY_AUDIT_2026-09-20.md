@@ -114,7 +114,7 @@ underpowered. QPC-V4 now uses the same 16-epoch budget and patience 4.
 | `hieusunday0412` | QPC uniform | 2 |
 | `vtk269` | QPC BD-weighted | 0 |
 | `nguyenhoanglan1232` | QPC BD-weighted | 1 |
-| `linhowi05` | QPC BD-weighted | 2 |
+| `dieulinhh` | QPC BD-weighted | 2 |
 
 Uniform samples QP `[30,35,40,45,50]` equally. BD-weighted uses point weights
 `[0.089,0.215,0.288,0.285,0.123]`, derived from the preregistered four segment
@@ -150,4 +150,3 @@ allocation/real-codec differentiable training, not another saliency mask grid.
 - `ops/gates_qpc.py`: validation-only conditioning audit.
 - `ops/audit_kaggle_history.py`: notebook/version inventory.
 - `ops/download_kaggle_results.py`: compact result/log downloader.
-

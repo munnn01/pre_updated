@@ -59,7 +59,7 @@ that condition?
 | `nguyenhoanglan1232` | QPC BD-weighted | 1 |
 | `dngbolm` | additive control | 2 |
 | `hieusunday0412` | QPC uniform | 2 |
-| `linhowi05` | QPC BD-weighted | 2 |
+| `dieulinhh` | QPC BD-weighted | 2 |
 
 ## Gates and continuation rule
 
