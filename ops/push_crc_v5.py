@@ -90,7 +90,7 @@ def notebook(cell: str) -> dict:
     }
 
 
-def metadata(account: str, slug: str) -> dict:
+def metadata(account: str, slug: str, attach_previous: bool = False) -> dict:
     return {
         "id": f"{account}/{slug}",
         "title": slug,
@@ -101,7 +101,7 @@ def metadata(account: str, slug: str) -> dict:
         "enable_gpu": True,
         "enable_internet": True,
         "dataset_sources": [KINETICS],
-        "kernel_sources": [],
+        "kernel_sources": [f"{account}/{slug}"] if attach_previous else [],
         "competition_sources": [],
         "model_sources": [],
     }
@@ -129,6 +129,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=260920)
     parser.add_argument("--accelerator", default="NvidiaTeslaT4")
     parser.add_argument("--timeout", type=int, default=0)
+    parser.add_argument(
+        "--attach-previous",
+        action="store_true",
+        help="attach this kernel's previous-version output for account-local resume",
+    )
     parser.add_argument("--write-only", action="store_true")
     args = parser.parse_args()
 
@@ -139,7 +144,8 @@ def main() -> None:
         json.dumps(notebook(render_cell(commit, args.arm, args.seed))), encoding="utf-8"
     )
     (push_dir / "kernel-metadata.json").write_text(
-        json.dumps(metadata(args.account, args.slug)), encoding="utf-8"
+        json.dumps(metadata(args.account, args.slug, args.attach_previous)),
+        encoding="utf-8",
     )
     print(f"[crc-v5-push] generated {push_dir} at {commit}")
     if args.write_only:

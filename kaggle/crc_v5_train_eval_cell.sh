@@ -52,12 +52,20 @@ fi
 python scripts/build_train_index.py \
   --root "$KIN_ROOT" --out "$INDEX" --assert-fingerprint 30f083f8520a
 
-# Account-local Stage 1. No checkpoint crosses a Kaggle account boundary.
-echo "[stage1] QPC pretrain arm=$ARM seed=$SEED"
-python train.py --config configs/qpc_v4_ar.yaml \
-  data.index="$INDEX" out_dir="$STAGE1" seed="$SEED" \
-  train.epochs=16 train.resume=false train.finetune=false \
-  2>&1 | tee "$STAGE1.log"
+# Account-local Stage 1. On a corrected notebook version, reuse only this
+# kernel's own prior-version checkpoint when it is attached as a kernel source.
+mkdir -p "$STAGE1/checkpoints"
+PREV_STAGE1="$(find /kaggle/input -type f -path "*/outputs/crc_v5_${ARM}_stage1/checkpoints/preprocessor.pth" -print -quit || true)"
+if [ -n "$PREV_STAGE1" ]; then
+  cp "$PREV_STAGE1" "$STAGE1/checkpoints/preprocessor.pth"
+  echo "[stage1] reused previous-version checkpoint=$PREV_STAGE1"
+else
+  echo "[stage1] QPC pretrain arm=$ARM seed=$SEED"
+  python train.py --config configs/qpc_v4_ar.yaml \
+    data.index="$INDEX" out_dir="$STAGE1" seed="$SEED" \
+    train.epochs=16 train.resume=false train.finetune=false \
+    2>&1 | tee "$STAGE1/train.log"
+fi
 
 STAGE1_CKPT="$STAGE1/checkpoints/preprocessor.pth"
 if [ ! -f "$STAGE1_CKPT" ]; then

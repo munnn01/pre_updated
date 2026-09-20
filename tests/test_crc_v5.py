@@ -72,6 +72,8 @@ def test_crc_matrix_and_notebook_protocol():
     assert 'TARGET="-0.05"' in cell
     assert 'DUAL_LR="0.005"' in cell
     assert "configs/qpc_v4_ar.yaml" in cell
+    assert 'mkdir -p "$STAGE1/checkpoints"' in cell
+    assert "PREV_STAGE1=" in cell
     assert "run_arm control false 0.0 0.0 0.001" in cell
     assert 'run_arm "$ARM"' in cell
     assert "eval.split=val" in cell and "eval.num_shards=20" in cell
@@ -79,3 +81,6 @@ def test_crc_matrix_and_notebook_protocol():
     assert "timeout " not in cell.lower()
     meta = module.metadata("shungg05", "crc-v5-control")
     assert meta["dataset_sources"] == ["qktttttttttt/kineticscleaned"]
+    assert meta["kernel_sources"] == []
+    resumed = module.metadata("huolgggnuyen", "crc-v5", attach_previous=True)
+    assert resumed["kernel_sources"] == ["huolgggnuyen/crc-v5"]
