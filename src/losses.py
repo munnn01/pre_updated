@@ -244,6 +244,7 @@ def preprocessing_loss(
     task_mask: torch.Tensor | None = None,
     saliency_pred: torch.Tensor | None = None,
     saliency_target: torch.Tensor | None = None,
+    rate_objective: torch.Tensor | None = None,
 ) -> Dict[str, torch.Tensor]:
     """Composite preprocessor loss.
 
@@ -264,7 +265,17 @@ def preprocessing_loss(
     l_task, _ = analyzer.accuracy_loss(x_hat, target)
     l_dist = feature_distillation(analyzer, x_source, x_hat)
     l_temp = temporal_consistency(x_source, x_hat)
-    total = w.lam_task * l_task + w.omega * l_dist + w.beta * bpp + w.tau * l_temp
+    # By default the rate objective is absolute proxy/codec bpp.  Codec-native
+    # constrained training supplies the differentiable excess ratio
+    # ``bpp(pre)/bpp(raw)-1-target`` instead.  Its forward value is measured by
+    # the real codec while its backward derivative comes from STECodec.
+    l_rate_objective = bpp if rate_objective is None else rate_objective
+    total = (
+        w.lam_task * l_task
+        + w.omega * l_dist
+        + w.beta * l_rate_objective
+        + w.tau * l_temp
+    )
     bg = (1.0 - task_mask) if task_mask is not None else None  # penalise background
     # Edit-magnitude penalty on the *preprocessor output* (not the reconstruction):
     # pushes small/sparse pixel edits so the codec has less added detail to encode.
@@ -346,6 +357,7 @@ def preprocessing_loss(
         "loss_task": l_task.detach(),
         "loss_dist": l_dist.detach(),
         "loss_rate": (bpp.detach() if torch.is_tensor(bpp) else torch.as_tensor(bpp)),
+        "loss_rate_objective": l_rate_objective.detach(),
         "loss_temp": l_temp.detach(),
         "loss_delta": l_delta.detach(),
         "loss_tv": l_tv.detach(),

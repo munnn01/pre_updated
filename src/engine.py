@@ -298,12 +298,38 @@ def _load_state_compat(model, state: dict) -> list:
         model.load_state_dict(state)
         return []
     except RuntimeError as exc:
-        res = model.load_state_dict(state, strict=False)
-        if res.unexpected_keys:
+        current = model.state_dict()
+        unexpected = sorted(set(state) - set(current))
+        if unexpected:
             raise RuntimeError(
                 "checkpoint has unexpected keys that would be dropped: "
-                f"{list(res.unexpected_keys)[:8]}") from exc
-        return list(res.missing_keys)
+                f"{unexpected[:8]}") from exc
+
+        compatible = {}
+        skipped = []
+        for key, value in state.items():
+            target = current[key]
+            if value.shape == target.shape:
+                compatible[key] = value
+                continue
+            # CRC-V5 expands the QPC FiLM input from [QP] to
+            # [QP, is_h264, is_h265].  Preserve the learned QP column and set
+            # the new codec columns to zero so both codec routes reproduce the
+            # warm-start checkpoint exactly before calibration.
+            if (
+                key.endswith("film.0.weight")
+                and value.ndim == target.ndim == 2
+                and value.shape[0] == target.shape[0]
+                and value.shape[1] < target.shape[1]
+            ):
+                expanded = torch.zeros_like(target)
+                expanded[:, : value.shape[1]] = value
+                compatible[key] = expanded
+                continue
+            skipped.append(key)
+
+        res = model.load_state_dict(compatible, strict=False)
+        return sorted(set(res.missing_keys) | set(skipped))
 
 
 def _reinit_modules(model, prefixes) -> int:
@@ -378,10 +404,33 @@ def _quality_conds(cfg: dict, codec: CompressAICodec) -> Dict[int, float]:
     return {q: _qp_norm(q2qp.get(q, a * q + b), cfg) for q in codec.qualities}
 
 
-def _rate_cond(level: float, batch: int, device, dtype) -> torch.Tensor:
-    """Build the [B, cond_dim] condition vector. Currently a single normalised
-    rate level; append a log target-rate here for explicit rate control."""
-    return torch.full((batch, 1), float(level), device=device, dtype=dtype)
+def _rate_cond(level: float, batch: int, device, dtype, *, codec: str | None = None,
+               cond_dim: int = 1) -> torch.Tensor:
+    """Build the FiLM condition used by QPC and codec-native CRC.
+
+    ``cond_dim=1`` is the historical QPC vector ``[qp_norm]``.  ``cond_dim=3``
+    adds an explicit one-hot codec route: ``[qp_norm, is_h264, is_h265]``.
+    Requiring the complete pair avoids an ambiguous single-bit convention and
+    keeps old checkpoints/configs bit-for-bit compatible.
+    """
+    if cond_dim == 1:
+        values = [float(level)]
+    elif cond_dim == 3:
+        if codec not in ("h264", "h265"):
+            raise ValueError("cond_dim=3 requires codec='h264' or codec='h265'")
+        values = [float(level), float(codec == "h264"), float(codec == "h265")]
+    else:
+        raise ValueError("rate condition supports cond_dim 1 (QP) or 3 (QP+codec)")
+    return torch.tensor(values, device=device, dtype=dtype).repeat(batch, 1)
+
+
+def _model_rate_cond(qp: float, cfg: dict, batch: int, device, dtype,
+                     codec: str | None = None) -> torch.Tensor:
+    """Config-aware condition constructor shared by train and real-codec eval."""
+    cond_dim = int(cfg.get("model", {}).get("cond_dim", 1))
+    return _rate_cond(
+        _qp_norm(qp, cfg), batch, device, dtype, codec=codec, cond_dim=cond_dim
+    )
 
 
 def _training_codec_setup(tr: dict, codec: CompressAICodec):
@@ -437,6 +486,32 @@ def _qp_sampling_weights(tr: dict, qp_list: list[int]) -> list[float] | None:
     if total <= 0.0:
         raise ValueError("train.qp_sampling_weights must contain a positive value")
     return [value / total for value in weights]
+
+
+def _rate_constraint_settings(cfg: dict, qp_list: list[int]) -> dict:
+    """Validate the codec-native augmented-Lagrangian rate constraint.
+
+    The dual variable is independent for every codec/QP cell.  That is the
+    smallest state able to react to the strongly different H.264/H.265 and
+    low/high-QP overheads observed in QPC-V4.
+    """
+    raw = cfg.get("loss", {}).get("rate_constraint") or {}
+    settings = {
+        "enabled": bool(raw.get("enabled", False)),
+        "target_ratio": float(raw.get("target_ratio", 0.0)),
+        "dual_lr": float(raw.get("dual_lr", 0.0)),
+        "lambda_init": float(raw.get("lambda_init", 0.0)),
+        "lambda_max": float(raw.get("lambda_max", 1.0)),
+    }
+    numeric = [settings[k] for k in ("target_ratio", "dual_lr", "lambda_init", "lambda_max")]
+    if not all(math.isfinite(v) for v in numeric):
+        raise ValueError("rate_constraint values must be finite")
+    if settings["dual_lr"] < 0 or settings["lambda_init"] < 0:
+        raise ValueError("rate_constraint dual_lr/lambda_init must be non-negative")
+    if settings["lambda_max"] <= 0 or settings["lambda_init"] > settings["lambda_max"]:
+        raise ValueError("rate_constraint requires 0 <= lambda_init <= lambda_max")
+    settings["cells"] = [f"{codec}:{qp}" for codec in ("h264", "h265") for qp in qp_list]
+    return settings
 
 
 def _loss_weights(cfg: dict) -> LossWeights:
@@ -496,7 +571,10 @@ def _val_loss(pre, codec, analyzer, loader, weights, qp_list, qp_to_quality,
         qp_losses = []
         for qp in qp_list:
             q = qp_to_quality[qp]
-            cond = _rate_cond(_qp_norm(qp, cfg), clips.shape[0], clips.device, clips.dtype)
+            cond = _model_rate_cond(
+                qp, cfg, clips.shape[0], clips.device, clips.dtype,
+                codec=_ste_codec_name(codec),
+            )
             # A2: use the SAME spatial mask objective as training and pin the
             # sampled teacher so saliency/loss share one active teacher.
             if weights.use_task_mask and hasattr(analyzer, "pin_active"):
@@ -586,6 +664,39 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
     clip_grad = float(tr.get("clip_grad", 0.0))
     qp_list, qp_to_quality = _training_codec_setup(tr, codec)
     qp_sampling = _qp_sampling_weights(tr, qp_list)
+    rate_constraint = _rate_constraint_settings(cfg, qp_list)
+    if rate_constraint["enabled"]:
+        if not isinstance(codec, STECodec) or not getattr(codec, "alternate", False):
+            raise ValueError(
+                "loss.rate_constraint requires codec.kind=ste and codec.ste_alternate=true"
+            )
+        if int(cfg.get("model", {}).get("cond_dim", 1)) != 3:
+            raise ValueError(
+                "loss.rate_constraint requires model.cond_dim=3 ([QP,h264,h265])"
+            )
+    rate_duals = {
+        cell: rate_constraint["lambda_init"] for cell in rate_constraint["cells"]
+    }
+
+    # Balanced, randomized blocks prevent codec/QP cells from being confounded
+    # with fine-tune time or LR drift.  Each block contains all ten cells once.
+    balanced_cells: list[tuple[str, int]] = []
+
+    def _next_codec_qp() -> tuple[str, int]:
+        if bool(tr.get("balanced_codec_qp", False)):
+            if not balanced_cells:
+                balanced_cells.extend(
+                    (name, point) for name in ("h264", "h265") for point in qp_list
+                )
+                random.shuffle(balanced_cells)
+            return balanced_cells.pop()
+        point = (
+            random.choices(qp_list, weights=qp_sampling, k=1)[0]
+            if qp_sampling is not None
+            else random.choice(qp_list)
+        )
+        name = random.choice(("h264", "h265")) if getattr(codec, "alternate", False) else _ste_codec_name(codec)
+        return name, point
 
     total_steps = len(train_loader) * epochs
     if max_steps:
@@ -641,6 +752,9 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
         start_epoch = st.get("epoch", 0)
         step, best_val = st.get("global_step", 0), st.get("best_val", float("inf"))
         no_improve = st.get("no_improve", 0)
+        for cell, value in (st.get("rate_duals") or {}).items():
+            if cell in rate_duals:
+                rate_duals[cell] = float(value)
         print(f"[train] resumed {last_path} @ epoch {start_epoch}, step {step}")
     if start_epoch >= epochs:
         print("[train] resume: already at target epochs; nothing to do")
@@ -650,7 +764,8 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
         torch.save({"model": pre.state_dict(), "opt": opt.state_dict(),
                     "sched": sched.state_dict() if sched is not None else None,
                     "cfg": cfg, "epoch": ep, "global_step": step,
-                    "best_val": best_val, "no_improve": no_improve}, path)
+                    "best_val": best_val, "no_improve": no_improve,
+                    "rate_duals": rate_duals}, path)
 
     pre.train()
     print(f"[train] {tag} | {n_train} clips | {len(train_loader)} steps/epoch | "
@@ -658,6 +773,17 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
           f"patience={patience or 'off'} | device={device}", flush=True)
     sampling_log = dict(zip(qp_list, qp_sampling)) if qp_sampling else "uniform"
     print(f"[train] QP sampling: {sampling_log}", flush=True)
+    if bool(tr.get("balanced_codec_qp", False)):
+        print("[train] codec/QP schedule: randomized complete blocks", flush=True)
+    if rate_constraint["enabled"]:
+        print(
+            "[train] codec-native rate constraint: "
+            f"target={rate_constraint['target_ratio']:+.3f} "
+            f"dual_lr={rate_constraint['dual_lr']:.4g} "
+            f"lambda_init={rate_constraint['lambda_init']:.4g} "
+            f"lambda_max={rate_constraint['lambda_max']:.4g}",
+            flush=True,
+        )
     tracker = make_tracker(Path(cfg.get("out_dir", "outputs")),
                            fallback_name=f"{tag}-seed{cfg.get('seed', 0)}")
     tracker.log_params({"tag": tag, "n_train": n_train, "total_steps": total_steps,
@@ -684,19 +810,16 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
             warm = 1.0 if warmup_steps == 0 else min(1.0, step / warmup_steps)
             step_w = replace(weights, beta=weights.beta * warm,
                              gamma=weights.gamma * warm, delta=weights.delta * warm)
-            qp = (
-                random.choices(qp_list, weights=qp_sampling, k=1)[0]
-                if qp_sampling is not None
-                else random.choice(qp_list)
-            )
-            # v9 per-codec: alternate the REAL codec each step so the
-            # codec-conditioned POST sees BOTH artifact families (a single
-            # codec would drift the shared trunk and leave the other
-            # codec embedding untrained — the E1 trade-off).
+            codec_name, qp = _next_codec_qp()
+            # Each randomized block visits all 2 codecs x 5 QPs.  The legacy
+            # stochastic path still alternates codecs when requested.
             if getattr(codec, "alternate", False):
-                codec.codec = random.choice(("h264", "h265"))
+                codec.codec = codec_name
             q = qp_to_quality[qp]
-            cond = _rate_cond(_qp_norm(qp, cfg), clips.shape[0], clips.device, clips.dtype)
+            cond = _model_rate_cond(
+                qp, cfg, clips.shape[0], clips.device, clips.dtype,
+                codec=codec_name,
+            )
             # A2: keep the sampled teacher fixed for saliency, task loss, and
             # feature distillation within this step.
             pinned = bool(weights.use_task_mask and hasattr(analyzer, "pin_active"))
@@ -709,13 +832,46 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                 else:
                     x_pre = pre(clips, cond, mask=mask)
                 x_hat, bpp = codec(x_pre, q)
+                rate_objective = None
+                if rate_constraint["enabled"]:
+                    # Same content, codec and QP as the treatment arm.  The
+                    # raw encode is the constraint denominator and has no
+                    # gradient; bpp(pre) keeps the STE proxy gradient.
+                    _, anchor_bpp = codec.compress_decompress(clips, q)
+                    anchor_bpp_t = bpp.new_tensor(max(float(anchor_bpp), 1e-8))
+                    rate_objective = (
+                        bpp / anchor_bpp_t
+                        - 1.0
+                        - rate_constraint["target_ratio"]
+                    )
+                    cell = f"{codec_name}:{qp}"
+                    violation = float(rate_objective.detach())
+                    rate_duals[cell] = min(
+                        rate_constraint["lambda_max"],
+                        max(
+                            0.0,
+                            rate_duals[cell]
+                            + rate_constraint["dual_lr"] * violation,
+                        ),
+                    )
+                    effective_w = replace(step_w, beta=rate_duals[cell])
+                else:
+                    anchor_bpp_t = bpp.new_tensor(float("nan"))
+                    violation = float("nan")
+                    cell = f"{codec_name}:{qp}"
+                    effective_w = step_w
                 if hasattr(pre, "post_restore"):
                     _codec_name = _ste_codec_name(codec)
                     x_hat = pre.post_restore(x_hat, cond, codec=_codec_name) if hasattr(pre.post_restore, "__call__") and "codec" in pre.post_restore.__code__.co_varnames else pre.post_restore(x_hat, cond)
-                parts = preprocessing_loss(analyzer, clips, x_hat, bpp, target, step_w,
+                parts = preprocessing_loss(analyzer, clips, x_hat, bpp, target, effective_w,
                                            x_pre=x_pre, task_mask=mask,
                                            saliency_pred=getattr(pre, "_last_w", None),
-                                           saliency_target=getattr(pre, "_last_w_target", None))
+                                           saliency_target=getattr(pre, "_last_w_target", None),
+                                           rate_objective=rate_objective)
+                parts["rate_anchor_bpp"] = anchor_bpp_t.detach()
+                parts["rate_excess_ratio"] = bpp.detach() / anchor_bpp_t - 1.0 if rate_constraint["enabled"] else bpp.new_tensor(float("nan"))
+                parts["rate_violation"] = bpp.new_tensor(violation)
+                parts["rate_dual"] = bpp.new_tensor(rate_duals[cell])
             finally:
                 if pinned:
                     analyzer.unpin_active()
@@ -746,6 +902,8 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                              task=f"{vals['loss_task']:.3f}",
                              dist=f"{vals['loss_dist']:.3f}",
                              bpp=f"{vals['loss_rate']:.3f}",
+                             rex=f"{vals['rate_excess_ratio']:+.3f}",
+                             dual=f"{vals['rate_dual']:.3f}",
                              tmp=f"{vals['loss_temp']:.4f}",
                              dlt=f"{vals['loss_delta']:.4f}",
                              tv=f"{vals['loss_tv']:.4f}",
@@ -753,8 +911,16 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                              dct=f"{vals['loss_dct']:.4f}",
                              dct3=f"{vals['loss_dct3d']:.4f}",
                              wd=f"{vals.get('loss_w_distill', 0.0):.4f}",
-                             lr=f"{lr_now:.1e}", qp=qp)
-            tracker.log_step(step, {**vals, "lr": lr_now, "qp": qp})
+                             lr=f"{lr_now:.1e}", qp=qp, codec=codec_name)
+            tracker.log_step(
+                step,
+                {
+                    **vals,
+                    "lr": lr_now,
+                    "qp": qp,
+                    "codec_is_h265": float(codec_name == "h265"),
+                },
+            )
             if max_steps and step >= max_steps:
                 stop = True
                 break
@@ -789,6 +955,20 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
 
     if val_loader is None or not ckpt_path.exists():
         _save(ckpt_path, epoch + 1)
+    if rate_constraint["enabled"]:
+        state_path = Path(cfg.get("out_dir", "outputs")) / "rate_constraint_state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "settings": {k: v for k, v in rate_constraint.items() if k != "cells"},
+                    "duals": rate_duals,
+                    "steps": step,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
     final = {"steps": step, "epochs_done": epoch + 1}
     if best_val != float("inf"):
         final["best_val"] = best_val
@@ -1079,7 +1259,11 @@ def _evaluate_classification(cfg, pre, codec, analyzer, out_dir) -> dict:
         # point, so it is recomputed per rate point (cannot preprocess once).
         if include_proxy:
             for q in codec.qualities:
-                cond = _rate_cond(qconds[q], clips.shape[0], clips.device, clips.dtype)
+                cond = _rate_cond(
+                    qconds[q], clips.shape[0], clips.device, clips.dtype,
+                    codec=getattr(codec, "codec", None),
+                    cond_dim=int(cfg.get("model", {}).get("cond_dim", 1)),
+                )
                 with torch.no_grad():
                     x_pre = pre(clips, cond, mask=gate_mask)
                 xh, bpp = codec.compress_decompress(x_pre, q)
@@ -1094,7 +1278,9 @@ def _evaluate_classification(cfg, pre, codec, analyzer, out_dir) -> dict:
         if have_ffmpeg:
             for name in ("h264", "h265"):
                 for qp in qps:
-                    cond = _rate_cond(_qp_norm(qp, cfg), clips.shape[0], clips.device, clips.dtype)
+                    cond = _model_rate_cond(
+                        qp, cfg, clips.shape[0], clips.device, clips.dtype, codec=name
+                    )
                     with torch.no_grad():
                         # v9-b dualcodec: per-codec PRE (encoder knows its codec)
                         if "codec" in pre.forward.__code__.co_varnames:
@@ -1258,7 +1444,10 @@ def _evaluate_detection(cfg, pre, codec, analyzer, out_dir) -> dict:
             continue
         for codec_name in ("h264", "h265"):
             for qp in qps:
-                cond = _rate_cond(_qp_norm(qp, cfg), clips.shape[0], clips.device, clips.dtype)
+                cond = _model_rate_cond(
+                    qp, cfg, clips.shape[0], clips.device, clips.dtype,
+                    codec=codec_name,
+                )
                 with torch.no_grad():
                     if "codec" in pre.forward.__code__.co_varnames:
                         x_pre = pre(clips, cond, codec=codec_name)
@@ -1448,7 +1637,11 @@ def _evaluate_tracking(cfg, pre, codec, analyzer, out_dir) -> dict:
         # Rate-conditioned: preprocess per operating point (output depends on it).
         if include_proxy:
             for q in codec.qualities:
-                cond = _rate_cond(qconds[q], clip.shape[0], clip.device, clip.dtype)
+                cond = _rate_cond(
+                    qconds[q], clip.shape[0], clip.device, clip.dtype,
+                    codec=getattr(codec, "codec", None),
+                    cond_dim=int(cfg.get("model", {}).get("cond_dim", 1)),
+                )
                 xh, bpp = _codec_chunked(pre, codec, clip, q, chunk, use_pre=True, cond=cond)
                 _acc_track(store, prep_proxy_name, q, bpp, track(xh, init), gt, valid)
                 xh0, bpp0 = _codec_chunked(pre, codec, clip, q, chunk, use_pre=False)
@@ -1461,7 +1654,9 @@ def _evaluate_tracking(cfg, pre, codec, analyzer, out_dir) -> dict:
                 pre.post_restore).parameters
             for cname in ("h264", "h265"):
                 for qp in qps:
-                    cond = _rate_cond(_qp_norm(qp, cfg), clip.shape[0], clip.device, clip.dtype)
+                    cond = _model_rate_cond(
+                        qp, cfg, clip.shape[0], clip.device, clip.dtype, codec=cname
+                    )
                     clip_pre = _pre_chunked(pre, clip, chunk, cond=cond,
                                             codec=cname if pre_takes_codec else None)
                     sc = StandardCodec(codec=cname, qp=qp, preset=ev.get("preset", "medium"))

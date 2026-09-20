@@ -1,0 +1,103 @@
+# CRC-V5 screening: codec-native, rate-constrained fine-tuning of QPC-V4.
+#
+# Five matched jobs form one randomized screening block: one STE control and a
+# 2x2 factorial over {target added-rate 0/-5%} x {dual LR 1e-3/5e-3}.  Every
+# job warm-starts from the same verified QPC-uniform seed-1 checkpoint.  Only
+# loss.rate_constraint differs between arms.
+device: auto
+out_dir: outputs/crc_v5
+seed: 260920
+
+task:
+  name: action_recognition
+  clip_size: 112
+  teachers: [r3d_18, mc3_18]
+  teacher_sampling: sample
+  backbone: r3d_18
+
+model:
+  arch: additive_cond
+  temporal_frames: 8
+  strength: 1.0
+  # [normalised QP, is_h264, is_h265].  The warm-start loader copies the old
+  # QP column and zero-initialises both codec columns.
+  cond_dim: 3
+  gate: false
+  qp_ref: [20, 51]
+
+codec:
+  kind: ste
+  ste_codec: h264
+  ste_alternate: true
+  ste_preset: medium
+  qualities: [1, 2, 3, 5, 8]
+  block: 8
+  inter: true
+  colorspace: yuv420
+  chroma_step_scale: 2.0
+  step_coarse: 0.25
+  step_fine: 0.03
+  anneal: 1.0
+
+data:
+  index: data/index/kinetics_hash_split.json
+  num_frames: 16
+  frame_size: 128
+  temporal_stride: 2
+
+loss:
+  lam_task: 1.0
+  omega: 0.0
+  # Control overrides this to 0.001; constrained arms replace it online with
+  # one projected dual variable per codec/QP cell.
+  beta: 0.0
+  tau: 0.0
+  delta: 0.0
+  gamma: 0.0
+  kappa: 10.0
+  kappa_t: 0.0
+  gamma_res: 0.0
+  mu: 10.0
+  use_task_mask: false
+  rate_constraint:
+    enabled: true
+    target_ratio: 0.0
+    dual_lr: 0.001
+    lambda_init: 0.01
+    lambda_max: 1.0
+
+train:
+  # This is a short real-codec calibration, not from-scratch training.
+  epochs: 1
+  max_steps: 500
+  reg_warmup_frac: 0.0
+  batch_size: 2
+  num_workers: 2
+  lr: 1.0e-5
+  clip_grad: 1.0
+  qp_list: [30, 35, 40, 45, 50]
+  qp_to_quality: {30: 8, 35: 5, 40: 3, 45: 2, 50: 1}
+  qp_sampling_weights: null
+  balanced_codec_qp: true
+  cosine: false
+  patience: 0
+  min_delta: 1.0e-4
+  val_qp_mode: all
+  val_max_batches: 1
+  resume: false
+  finetune: true
+
+eval:
+  split: val
+  include_proxy: false
+  per_sequence: true
+  batch_size: 2
+  num_workers: 2
+  held_out_backbone: r2plus1d_18
+  qp_list: [30, 35, 40, 45, 50]
+  preset: medium
+  # About 50/1010 validation clips, deterministically shared by all five arms.
+  shard_idx: 0
+  num_shards: 20
+  shard_salt: crc-v5-val-v1
+
