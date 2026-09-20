@@ -63,6 +63,7 @@ from .models import (
     CompressAICodec,
     STECodec,
     DualCodecSandwich,
+    DCTProjectedAdditivePreprocessor,
     DualPostSandwich,
     PerCodecPostSandwich,
     SandwichPreprocessor,
@@ -115,6 +116,25 @@ def _build_models(cfg: dict, device: torch.device, role: str = "train"):
             temporal_frames=int(m.get("temporal_frames", 8)),
             strength=float(m.get("strength", 1.0)),
             cond_dim=int(m.get("cond_dim", 1)),
+        ).to(device)
+    elif arch == "additive_dct":
+        # DCTP-V6: reuse the QPC semantic trunk, but constrain deployment edits
+        # to weak-HF attenuation plus motion-gated temporal stabilization.
+        pre = DCTProjectedAdditivePreprocessor(
+            temporal_frames=int(m.get("temporal_frames", 8)),
+            strength=float(m.get("strength", 1.0)),
+            cond_dim=int(m.get("cond_dim", 3)),
+            residual_scale=float(m.get("residual_scale", 0.0)),
+            dct_strength=float(m.get("dct_strength", 1.0)),
+            dct_threshold=float(m.get("dct_threshold", 1.0)),
+            dct_softness=float(m.get("dct_softness", 0.25)),
+            dct_block=int(m.get("dct_block", 8)),
+            dct_band_start=int(m.get("dct_band_start", 4)),
+            temporal_strength=float(m.get("temporal_strength", 0.0)),
+            motion_tau=float(m.get("motion_tau", 0.05)),
+            qp_slope=float(m.get("qp_slope", 0.65)),
+            h264_scale=float(m.get("h264_scale", 1.0)),
+            h265_scale=float(m.get("h265_scale", 1.0)),
         ).to(device)
     elif arch == "sandwich":
         # v8 model (docs/MODEL_SANDWICH.md): UP-VCM PRE + restoration POST
@@ -194,7 +214,7 @@ def _build_models(cfg: dict, device: torch.device, role: str = "train"):
             edit_kind=str(m.get("edit_kind", "residual")),
         ).to(device)
     else:
-        raise ValueError(f"model.arch must be 'unet', 'additive', 'additive_cond', 'upvcm', 'sandwich', 'percodec_sandwich', 'dualpost' or 'dualcodec', got {arch!r}")
+        raise ValueError(f"model.arch must be 'unet', 'additive', 'additive_cond', 'additive_dct', 'upvcm', 'sandwich', 'percodec_sandwich', 'dualpost' or 'dualcodec', got {arch!r}")
     cc = cfg["codec"]
     kind = cc.get("kind", "compressai")
     if kind == "entropy":
@@ -1093,6 +1113,10 @@ def evaluate(cfg: dict, ckpt_path: str, out_dir: str | None = None) -> dict:
     if isinstance(ckpt_cfg, dict) and isinstance(ckpt_cfg.get("model"), dict):
         arch_keys = ("arch", "temporal_frames", "edit_kind", "gate_area", "gate",
                      "base_ch", "res_scale", "cond_dim", "max_relative_edit",
+                     # DCTP-V6 fixed projection knobs
+                     "residual_scale", "dct_strength", "dct_threshold",
+                     "dct_softness", "dct_block", "dct_band_start",
+                     "temporal_strength", "qp_slope", "h264_scale", "h265_scale",
                      # upvcm arch knobs (must match training exactly)
                      "s_ch", "editor_ch", "dino_weight", "dino_name", "motion_tau",
                      "post_base", "w_budget", "post_temporal")
