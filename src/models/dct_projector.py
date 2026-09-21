@@ -44,6 +44,7 @@ class DCTProjectedAdditivePreprocessor(AdditiveCondPreprocessor):
         qp_slope: float = 0.65,
         h264_scale: float = 1.0,
         h265_scale: float = 1.0,
+        semantic_protect_area: float = 0.0,
     ):
         super().__init__(temporal_frames=temporal_frames, strength=strength, cond_dim=cond_dim)
         if cond_dim != 3:
@@ -62,6 +63,8 @@ class DCTProjectedAdditivePreprocessor(AdditiveCondPreprocessor):
             raise ValueError("dct_threshold, dct_softness, and motion_tau must be positive")
         if dct_block < 2 or not 1 <= dct_band_start <= 2 * (dct_block - 1):
             raise ValueError("invalid DCT block or band start")
+        if not 0.0 <= semantic_protect_area < 1.0:
+            raise ValueError("semantic_protect_area must be in [0,1)")
         self.residual_scale = float(residual_scale)
         self.dct_strength = float(dct_strength)
         self.dct_threshold = float(dct_threshold)
@@ -73,6 +76,7 @@ class DCTProjectedAdditivePreprocessor(AdditiveCondPreprocessor):
         self.qp_slope = float(qp_slope)
         self.h264_scale = float(h264_scale)
         self.h265_scale = float(h265_scale)
+        self.semantic_protect_area = float(semantic_protect_area)
 
     def _conditioned_strength(self, cond: torch.Tensor, base: float) -> torch.Tensor:
         """Return one bounded strength per clip from [QP,h264,h265]."""
@@ -84,7 +88,43 @@ class DCTProjectedAdditivePreprocessor(AdditiveCondPreprocessor):
         qp_scale = (1.0 - self.qp_slope * qp).clamp(0.0, 1.0)
         return (float(base) * codec_scale * qp_scale).clamp(0.0, 1.0)
 
-    def _spatial_project(self, frames: torch.Tensor, strength: torch.Tensor) -> torch.Tensor:
+    def _semantic_protection(
+        self,
+        source: torch.Tensor,
+        edited: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return a codec-block-aligned semantic tube without transmitting it.
+
+        The warm-started AR editor's absolute intervention is treated only as
+        an importance signal.  Scores are max-pooled over time before top-k
+        selection, so every frame protects the same blocks and the resulting
+        preprocessing cannot introduce a flickering mask.  The output has
+        shape ``[B*T,1,Hb,Wb]`` and contains exactly the registered protected
+        block fraction (up to integer rounding).
+        """
+        b, _, t, h, w = source.shape
+        block = self.dct_block
+        pad_h = (-h) % block
+        pad_w = (-w) % block
+        importance = (edited - source).abs().mean(dim=1, keepdim=True)
+        importance = importance.amax(dim=2)  # stable tube: [B,1,H,W]
+        importance = F.pad(importance, (0, pad_w, 0, pad_h), mode="replicate")
+        scores = F.avg_pool2d(importance, kernel_size=block, stride=block)
+        nh, nw = scores.shape[-2:]
+        flat = scores.reshape(b, -1)
+        count = flat.shape[1]
+        k = max(1, min(count, round(self.semantic_protect_area * count)))
+        indices = flat.topk(k, dim=1, largest=True, sorted=False).indices
+        protected = torch.zeros_like(flat).scatter_(1, indices, 1.0)
+        protected = protected.reshape(b, 1, nh, nw)
+        return protected[:, None].expand(b, t, 1, nh, nw).reshape(b * t, 1, nh, nw)
+
+    def _spatial_project(
+        self,
+        frames: torch.Tensor,
+        strength: torch.Tensor,
+        protection: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         if self.dct_strength == 0.0:
             return frames
         n, c, h, w = frames.shape
@@ -110,12 +150,27 @@ class DCTProjectedAdditivePreprocessor(AdditiveCondPreprocessor):
         softness = self.dct_softness * mean + 1e-6
         weak = torch.sigmoid((cutoff - magnitude) / softness) * high_f
         attenuate = strength.view(n, 1, 1, 1, 1, 1) * weak
+        if protection is not None:
+            if protection.shape != (n, 1, nh, nw):
+                raise ValueError(
+                    "protection must have shape "
+                    f"{(n, 1, nh, nw)}, got {tuple(protection.shape)}"
+                )
+            attenuate = attenuate * (1.0 - protection[..., None, None])
         coeff = coeff * (1.0 - attenuate)
 
         flat = coeff.reshape(-1, block, block)
         restored = basis.transpose(0, 1) @ flat @ basis
         restored = restored.reshape(n, c, nh, nw, block, block)
         restored = restored.permute(0, 1, 2, 4, 3, 5).reshape(n, c, hp, wp)
+        if protection is not None:
+            # An unmodified coefficient block would still incur floating-point
+            # DCT/IDCT round-trip noise.  Copy protected source pixels back so
+            # the semantic guard is an exact identity, not an approximation.
+            pixel_guard = protection.repeat_interleave(block, dim=-2).repeat_interleave(
+                block, dim=-1
+            )
+            restored = restored * (1.0 - pixel_guard) + padded * pixel_guard
         return restored[..., :h, :w].clamp(0.0, 1.0)
 
     def _temporal_project(
@@ -146,7 +201,8 @@ class DCTProjectedAdditivePreprocessor(AdditiveCondPreprocessor):
         if cond is None:
             cond = x.new_zeros(x.shape[0], self.cond_dim)
             cond[:, 1] = 1.0
-        if self.residual_scale == 0.0:
+        edited = None
+        if self.residual_scale == 0.0 and self.semantic_protect_area == 0.0:
             # Half of the factorial is a purely structural subtractive arm.
             # Skipping the semantic trunk makes those arms independent of its
             # weights and avoids spending GPU time on an output multiplied by 0.
@@ -158,7 +214,11 @@ class DCTProjectedAdditivePreprocessor(AdditiveCondPreprocessor):
         frames = candidate.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
         spatial_strength = self._conditioned_strength(cond, self.dct_strength)
         spatial_strength = spatial_strength.repeat_interleave(t)
-        spatial = self._spatial_project(frames, spatial_strength)
+        protection = None
+        if self.semantic_protect_area > 0.0:
+            assert edited is not None
+            protection = self._semantic_protection(x, edited)
+        spatial = self._spatial_project(frames, spatial_strength, protection)
         spatial = spatial.reshape(b, t, c, h, w).permute(0, 2, 1, 3, 4)
         temporal_strength = self._conditioned_strength(cond, self.temporal_strength)
         return self._temporal_project(x, spatial, temporal_strength)

@@ -1,8 +1,9 @@
-# DCTP-V6 validation screen: fixed structural rate projection over a canonical
-# QPC warm start. No training is run; model knobs are checkpointed per arm.
+# Semantic-DCTP V9: the learned codec/QP residual is used only to protect
+# important block tubes.  The transmitted image receives subtractive DCT and
+# temporal projection; the rate-adding residual itself is never added.
 device: auto
-out_dir: outputs/dctp_v6
-seed: 220921
+out_dir: outputs/semantic_dctp_v9
+seed: 240921
 
 task:
   name: action_recognition
@@ -18,16 +19,16 @@ model:
   cond_dim: 3
   residual_scale: 0.0
   dct_strength: 1.0
-  dct_threshold: 1.0
+  dct_threshold: 2.0
   dct_softness: 0.25
   dct_block: 8
-  dct_band_start: 4
+  dct_band_start: 2
   temporal_strength: 0.0
   motion_tau: 0.05
-  qp_slope: 0.65
+  qp_slope: 0.75
   h264_scale: 1.0
   h265_scale: 1.0
-  semantic_protect_area: 0.0
+  semantic_protect_area: 0.375
   gate: false
   qp_ref: [20, 51]
 
@@ -61,4 +62,4 @@ eval:
   preset: medium
   shard_idx: 0
   num_shards: 10
-  shard_salt: dctp-v6-screen-v1
+  shard_salt: semantic-dctp-v9-val-v1

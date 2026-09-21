@@ -135,6 +135,7 @@ def _build_models(cfg: dict, device: torch.device, role: str = "train"):
             qp_slope=float(m.get("qp_slope", 0.65)),
             h264_scale=float(m.get("h264_scale", 1.0)),
             h265_scale=float(m.get("h265_scale", 1.0)),
+            semantic_protect_area=float(m.get("semantic_protect_area", 0.0)),
         ).to(device)
     elif arch == "sandwich":
         # v8 model (docs/MODEL_SANDWICH.md): UP-VCM PRE + restoration POST
@@ -1148,6 +1149,7 @@ def evaluate(cfg: dict, ckpt_path: str, out_dir: str | None = None) -> dict:
                      "residual_scale", "dct_strength", "dct_threshold",
                      "dct_softness", "dct_block", "dct_band_start",
                      "temporal_strength", "qp_slope", "h264_scale", "h265_scale",
+                     "semantic_protect_area",
                      # upvcm arch knobs (must match training exactly)
                      "s_ch", "editor_ch", "dino_weight", "dino_name", "motion_tau",
                      "post_base", "w_budget", "post_temporal")

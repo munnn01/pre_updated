@@ -37,6 +37,9 @@ def convert(
     dct_threshold: float,
     temporal_strength: float,
     seed: int,
+    dct_band_start: int = 4,
+    qp_slope: float = 0.65,
+    semantic_protect_area: float = 0.0,
 ) -> dict:
     actual_sha = file_sha256(source_path)
     if actual_sha != expected_sha:
@@ -49,7 +52,10 @@ def convert(
         residual_scale=residual_scale,
         dct_strength=dct_strength,
         dct_threshold=dct_threshold,
+        dct_band_start=dct_band_start,
         temporal_strength=temporal_strength,
+        qp_slope=qp_slope,
+        semantic_protect_area=semantic_protect_area,
     )
     missing = _load_state_compat(model, source_state)
     if missing:
@@ -69,12 +75,13 @@ def convert(
             "dct_threshold": float(dct_threshold),
             "dct_softness": 0.25,
             "dct_block": 8,
-            "dct_band_start": 4,
+            "dct_band_start": int(dct_band_start),
             "temporal_strength": float(temporal_strength),
             "motion_tau": 0.05,
-            "qp_slope": 0.65,
+            "qp_slope": float(qp_slope),
             "h264_scale": 1.0,
             "h265_scale": 1.0,
+            "semantic_protect_area": float(semantic_protect_area),
             "gate": False,
             "qp_ref": [20, 51],
         }
@@ -103,6 +110,9 @@ def convert(
         "dct_strength": dct_strength,
         "dct_threshold": dct_threshold,
         "temporal_strength": temporal_strength,
+        "dct_band_start": dct_band_start,
+        "qp_slope": qp_slope,
+        "semantic_protect_area": semantic_protect_area,
     }
 
 
@@ -115,6 +125,9 @@ def main() -> None:
     parser.add_argument("--dct-strength", type=float, required=True)
     parser.add_argument("--dct-threshold", type=float, default=1.0)
     parser.add_argument("--temporal-strength", type=float, required=True)
+    parser.add_argument("--dct-band-start", type=int, default=4)
+    parser.add_argument("--qp-slope", type=float, default=0.65)
+    parser.add_argument("--semantic-protect-area", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=220921)
     args = parser.parse_args()
     result = convert(
@@ -126,6 +139,9 @@ def main() -> None:
         dct_threshold=args.dct_threshold,
         temporal_strength=args.temporal_strength,
         seed=args.seed,
+        dct_band_start=args.dct_band_start,
+        qp_slope=args.qp_slope,
+        semantic_protect_area=args.semantic_protect_area,
     )
     print(json.dumps(result, sort_keys=True))
 

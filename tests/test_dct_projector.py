@@ -77,3 +77,47 @@ def test_temporal_projection_leaves_motion_less_affected_than_static_pixels() ->
     out = model._temporal_project(source, spatial, torch.ones(1))
     assert torch.allclose(out[:, :, 1, :, :2], out[:, :, 0, :, :2], atol=1e-5)
     assert torch.allclose(out[:, :, 1, :, 2:], spatial[:, :, 1, :, 2:], atol=1e-5)
+
+
+def test_semantic_protection_is_a_stable_exact_block_tube() -> None:
+    model = DCTProjectedAdditivePreprocessor(
+        cond_dim=3,
+        dct_block=8,
+        semantic_protect_area=0.25,
+    )
+    source = torch.zeros(1, 3, 3, 16, 16)
+    edited = source.clone()
+    edited[:, :, 1, :8, :8] = 0.75
+    protection = model._semantic_protection(source, edited)
+    assert protection.shape == (3, 1, 2, 2)
+    assert torch.equal(protection[0], protection[1])
+    assert torch.equal(protection[1], protection[2])
+    assert int(protection[0].sum()) == 1
+    assert float(protection[0, 0, 0, 0]) == 1.0
+
+
+def test_semantic_protection_keeps_protected_block_exact() -> None:
+    torch.manual_seed(3)
+    model = DCTProjectedAdditivePreprocessor(
+        cond_dim=3,
+        dct_block=8,
+        dct_band_start=2,
+        dct_threshold=4.0,
+        qp_slope=0.0,
+    )
+    frames = torch.rand(1, 3, 16, 16)
+    protection = torch.zeros(1, 1, 2, 2)
+    protection[:, :, 0, 0] = 1.0
+    out = model._spatial_project(frames, torch.ones(1), protection)
+    assert torch.equal(out[..., :8, :8], frames[..., :8, :8])
+    assert not torch.equal(out[..., 8:, 8:], frames[..., 8:, 8:])
+
+
+def test_semantic_protect_area_validation() -> None:
+    for value in (-0.01, 1.0):
+        try:
+            DCTProjectedAdditivePreprocessor(cond_dim=3, semantic_protect_area=value)
+        except ValueError as exc:
+            assert "semantic_protect_area" in str(exc)
+        else:
+            raise AssertionError("invalid semantic protect area was accepted")

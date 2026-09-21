@@ -40,11 +40,17 @@ def test_checkpoint_conversion_is_hash_pinned_and_expands_condition(tmp_path) ->
         dct_threshold=1.0,
         temporal_strength=0.35,
         seed=220921,
+        dct_band_start=2,
+        qp_slope=0.75,
+        semantic_protect_area=0.25,
     )
     converted = torch.load(target, map_location="cpu", weights_only=False)
     assert audit["source_sha256"] == sha
     assert converted["cfg"]["model"]["arch"] == "additive_dct"
     assert converted["model"]["film.0.weight"].shape[1] == 3
+    assert converted["cfg"]["model"]["dct_band_start"] == 2
+    assert converted["cfg"]["model"]["qp_slope"] == 0.75
+    assert converted["cfg"]["model"]["semantic_protect_area"] == 0.25
     assert torch.equal(
         converted["model"]["film.0.weight"][:, :1],
         source_model.state_dict()["film.0.weight"],
