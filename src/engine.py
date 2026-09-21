@@ -548,11 +548,60 @@ def _rate_constraint_settings(
         raise ValueError("rate_constraint dual_lr/lambda_init must be non-negative")
     if settings["lambda_max"] <= 0 or settings["lambda_init"] > settings["lambda_max"]:
         raise ValueError("rate_constraint requires 0 <= lambda_init <= lambda_max")
+
+    # Backward-compatible codec-specific overrides.  Historical CRC-V5 configs
+    # keep using the scalar target_ratio/dual_lr above.  Follow-up experiments
+    # may override either value per codec without changing the independent
+    # lambda[c, qp] state or silently rewriting the registered CRC-V5 recipe.
+    raw_per_codec = raw.get("per_codec", {})
+    if raw_per_codec is None:
+        raw_per_codec = {}
+    if not isinstance(raw_per_codec, dict):
+        raise ValueError("rate_constraint.per_codec must be a mapping")
+    unknown = sorted(set(raw_per_codec) - {"h264", "h265"})
+    if unknown:
+        raise ValueError(
+            "rate_constraint.per_codec has unsupported codec(s): "
+            + ",".join(unknown)
+        )
+    per_codec = {}
+    for codec in active_codecs:
+        override = raw_per_codec.get(codec, {})
+        if override is None:
+            override = {}
+        if not isinstance(override, dict):
+            raise ValueError(f"rate_constraint.per_codec.{codec} must be a mapping")
+        codec_settings = {
+            "target_ratio": float(
+                override.get("target_ratio", settings["target_ratio"])
+            ),
+            "dual_lr": float(override.get("dual_lr", settings["dual_lr"])),
+        }
+        if not all(math.isfinite(v) for v in codec_settings.values()):
+            raise ValueError(
+                f"rate_constraint.per_codec.{codec} values must be finite"
+            )
+        if codec_settings["dual_lr"] < 0:
+            raise ValueError(
+                f"rate_constraint.per_codec.{codec}.dual_lr must be non-negative"
+            )
+        per_codec[codec] = codec_settings
+
     settings["codecs"] = list(active_codecs)
+    settings["per_codec"] = per_codec
     settings["cells"] = [
         f"{codec}:{qp}" for codec in active_codecs for qp in qp_list
     ]
     return settings
+
+
+def _codec_rate_constraint(settings: dict, codec: str) -> dict:
+    """Return the resolved target and dual step size for one active codec."""
+    name = str(codec).lower()
+    try:
+        return settings["per_codec"][name]
+    except KeyError as exc:
+        raise ValueError(f"no rate-constraint settings for codec {name!r}") from exc
 
 
 def _evaluation_codecs(cfg: dict) -> tuple[str, ...]:
@@ -826,11 +875,15 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
     if bool(tr.get("balanced_codec_qp", False)):
         print("[train] codec/QP schedule: randomized complete blocks", flush=True)
     if rate_constraint["enabled"]:
+        codec_settings_log = ", ".join(
+            f"{name}(target={values['target_ratio']:+.3f},"
+            f"dual_lr={values['dual_lr']:.4g})"
+            for name, values in rate_constraint["per_codec"].items()
+        )
         print(
             "[train] codec-native rate constraint: "
             f"codecs={','.join(rate_constraint['codecs'])} "
-            f"target={rate_constraint['target_ratio']:+.3f} "
-            f"dual_lr={rate_constraint['dual_lr']:.4g} "
+            f"per_codec={codec_settings_log} "
             f"lambda_init={rate_constraint['lambda_init']:.4g} "
             f"lambda_max={rate_constraint['lambda_max']:.4g}",
             flush=True,
@@ -885,6 +938,7 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                 x_hat, bpp = codec(x_pre, q)
                 rate_objective = None
                 if rate_constraint["enabled"]:
+                    codec_rate = _codec_rate_constraint(rate_constraint, codec_name)
                     # Same content, codec and QP as the treatment arm.  The
                     # raw encode is the constraint denominator and has no
                     # gradient; bpp(pre) keeps the STE proxy gradient.
@@ -893,7 +947,7 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                     rate_objective = (
                         bpp / anchor_bpp_t
                         - 1.0
-                        - rate_constraint["target_ratio"]
+                        - codec_rate["target_ratio"]
                     )
                     cell = f"{codec_name}:{qp}"
                     violation = float(rate_objective.detach())
@@ -902,7 +956,7 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                         max(
                             0.0,
                             rate_duals[cell]
-                            + rate_constraint["dual_lr"] * violation,
+                            + codec_rate["dual_lr"] * violation,
                         ),
                     )
                     effective_w = replace(step_w, beta=rate_duals[cell])

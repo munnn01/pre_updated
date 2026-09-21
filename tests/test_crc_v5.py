@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 import torch
+from src.config import load_config
 from src.engine import (
+    _codec_rate_constraint,
     _evaluation_codecs,
     _load_state_compat,
     _rate_cond,
@@ -66,7 +68,68 @@ def test_rate_constraint_validation_and_cells():
     }
     settings = _rate_constraint_settings(cfg, [30, 35])
     assert settings["target_ratio"] == -0.05
+    assert settings["per_codec"] == {
+        "h264": {"target_ratio": -0.05, "dual_lr": 0.005},
+        "h265": {"target_ratio": -0.05, "dual_lr": 0.005},
+    }
     assert settings["cells"] == ["h264:30", "h264:35", "h265:30", "h265:35"]
+
+
+def test_rate_constraint_resolves_asymmetric_codec_overrides():
+    cfg = {
+        "loss": {
+            "rate_constraint": {
+                "enabled": True,
+                "target_ratio": -0.05,
+                "dual_lr": 0.001,
+                "lambda_init": 0.01,
+                "lambda_max": 1.0,
+                "per_codec": {
+                    "h264": {"target_ratio": 0.0, "dual_lr": 0.015},
+                    "h265": {"target_ratio": 0.0, "dual_lr": 0.005},
+                },
+            }
+        }
+    }
+    settings = _rate_constraint_settings(cfg, [30, 35])
+    assert _codec_rate_constraint(settings, "h264") == {
+        "target_ratio": 0.0,
+        "dual_lr": 0.015,
+    }
+    assert _codec_rate_constraint(settings, "h265") == {
+        "target_ratio": 0.0,
+        "dual_lr": 0.005,
+    }
+
+
+def test_rate_constraint_rejects_bad_codec_overrides():
+    base = {
+        "loss": {
+            "rate_constraint": {
+                "per_codec": {"h266": {"dual_lr": 0.1}},
+            }
+        }
+    }
+    with pytest.raises(ValueError, match="unsupported codec"):
+        _rate_constraint_settings(base, [30])
+
+    base["loss"]["rate_constraint"]["per_codec"] = {
+        "h264": {"dual_lr": -0.1}
+    }
+    with pytest.raises(ValueError, match="must be non-negative"):
+        _rate_constraint_settings(base, [30])
+
+
+def test_crc_v5_per_codec_config_is_the_registered_asymmetric_treatment():
+    path = Path(__file__).resolve().parents[1] / "configs" / "crc_v5_per_codec_ar.yaml"
+    cfg = load_config(str(path))
+    settings = _rate_constraint_settings(cfg, cfg["train"]["qp_list"])
+    assert cfg["codec"]["ste_alternate"] is True
+    assert cfg["train"]["balanced_codec_qp"] is True
+    assert _codec_rate_constraint(settings, "h264")["dual_lr"] == 0.015
+    assert _codec_rate_constraint(settings, "h265")["dual_lr"] == 0.005
+    assert _codec_rate_constraint(settings, "h264")["target_ratio"] == 0.0
+    assert _codec_rate_constraint(settings, "h265")["target_ratio"] == 0.0
 
 
 def test_rate_constraint_can_be_scoped_to_one_codec():
