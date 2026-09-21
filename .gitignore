@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 outputs/
 ops/_push/
+ops/_push_datasets/
 data/index/*.json
 *.pth
