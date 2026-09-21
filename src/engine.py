@@ -508,13 +508,30 @@ def _qp_sampling_weights(tr: dict, qp_list: list[int]) -> list[float] | None:
     return [value / total for value in weights]
 
 
-def _rate_constraint_settings(cfg: dict, qp_list: list[int]) -> dict:
+def _codec_names(values, *, field: str) -> tuple[str, ...]:
+    """Validate an ordered, non-empty subset of the deployment codecs."""
+    if isinstance(values, str):
+        values = [values]
+    names = tuple(str(value).lower() for value in values)
+    if not names or len(names) != len(set(names)) or any(
+        name not in {"h264", "h265"} for name in names
+    ):
+        raise ValueError(f"{field} must be a non-empty unique subset of h264,h265")
+    return names
+
+
+def _rate_constraint_settings(
+    cfg: dict,
+    qp_list: list[int],
+    codecs: tuple[str, ...] = ("h264", "h265"),
+) -> dict:
     """Validate the codec-native augmented-Lagrangian rate constraint.
 
     The dual variable is independent for every codec/QP cell.  That is the
     smallest state able to react to the strongly different H.264/H.265 and
     low/high-QP overheads observed in QPC-V4.
     """
+    active_codecs = _codec_names(codecs, field="rate_constraint codecs")
     raw = cfg.get("loss", {}).get("rate_constraint") or {}
     settings = {
         "enabled": bool(raw.get("enabled", False)),
@@ -530,8 +547,17 @@ def _rate_constraint_settings(cfg: dict, qp_list: list[int]) -> dict:
         raise ValueError("rate_constraint dual_lr/lambda_init must be non-negative")
     if settings["lambda_max"] <= 0 or settings["lambda_init"] > settings["lambda_max"]:
         raise ValueError("rate_constraint requires 0 <= lambda_init <= lambda_max")
-    settings["cells"] = [f"{codec}:{qp}" for codec in ("h264", "h265") for qp in qp_list]
+    settings["codecs"] = list(active_codecs)
+    settings["cells"] = [
+        f"{codec}:{qp}" for codec in active_codecs for qp in qp_list
+    ]
     return settings
+
+
+def _evaluation_codecs(cfg: dict) -> tuple[str, ...]:
+    """Real codecs requested for evaluation (both when omitted)."""
+    values = cfg.get("eval", {}).get("codecs", ("h264", "h265"))
+    return _codec_names(values, field="eval.codecs")
 
 
 def _loss_weights(cfg: dict) -> LossWeights:
@@ -684,12 +710,15 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
     clip_grad = float(tr.get("clip_grad", 0.0))
     qp_list, qp_to_quality = _training_codec_setup(tr, codec)
     qp_sampling = _qp_sampling_weights(tr, qp_list)
-    rate_constraint = _rate_constraint_settings(cfg, qp_list)
+    training_codecs = (
+        ("h264", "h265")
+        if getattr(codec, "alternate", False)
+        else (_ste_codec_name(codec),)
+    )
+    rate_constraint = _rate_constraint_settings(cfg, qp_list, training_codecs)
     if rate_constraint["enabled"]:
-        if not isinstance(codec, STECodec) or not getattr(codec, "alternate", False):
-            raise ValueError(
-                "loss.rate_constraint requires codec.kind=ste and codec.ste_alternate=true"
-            )
+        if not isinstance(codec, STECodec):
+            raise ValueError("loss.rate_constraint requires codec.kind=ste")
         if int(cfg.get("model", {}).get("cond_dim", 1)) != 3:
             raise ValueError(
                 "loss.rate_constraint requires model.cond_dim=3 ([QP,h264,h265])"
@@ -698,14 +727,15 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
     rate_duals = {cell: initial_dual for cell in rate_constraint["cells"]}
 
     # Balanced, randomized blocks prevent codec/QP cells from being confounded
-    # with fine-tune time or LR drift.  Each block contains all ten cells once.
+    # with fine-tune time or LR drift. A single-codec calibration visits its five
+    # QPs; an alternating calibration visits all ten codec/QP cells.
     balanced_cells: list[tuple[str, int]] = []
 
     def _next_codec_qp() -> tuple[str, int]:
         if bool(tr.get("balanced_codec_qp", False)):
             if not balanced_cells:
                 balanced_cells.extend(
-                    (name, point) for name in ("h264", "h265") for point in qp_list
+                    (name, point) for name in training_codecs for point in qp_list
                 )
                 random.shuffle(balanced_cells)
             return balanced_cells.pop()
@@ -797,6 +827,7 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
     if rate_constraint["enabled"]:
         print(
             "[train] codec-native rate constraint: "
+            f"codecs={','.join(rate_constraint['codecs'])} "
             f"target={rate_constraint['target_ratio']:+.3f} "
             f"dual_lr={rate_constraint['dual_lr']:.4g} "
             f"lambda_init={rate_constraint['lambda_init']:.4g} "
@@ -1248,6 +1279,7 @@ def _evaluate_classification(cfg, pre, codec, analyzer, out_dir) -> dict:
         num_workers=ev.get("num_workers", 2), collate_fn=collate_clips,
     )
     qps = ev.get("qp_list", [30, 35, 40, 45, 50])
+    eval_codecs = _evaluation_codecs(cfg)
     include_proxy = bool(ev.get("include_proxy", False))
     have_ffmpeg = ffmpeg_available()
     if not have_ffmpeg:
@@ -1299,7 +1331,7 @@ def _evaluate_classification(cfg, pre, codec, analyzer, out_dir) -> dict:
                 s0, n0 = _task_metric(analyzer, xh0, labels)
                 _accumulate(store, proxy_name, q, bpp0, s0, n0)
         if have_ffmpeg:
-            for name in ("h264", "h265"):
+            for name in eval_codecs:
                 for qp in qps:
                     cond = _model_rate_cond(
                         qp, cfg, clips.shape[0], clips.device, clips.dtype, codec=name
@@ -1367,7 +1399,8 @@ def _evaluate_classification(cfg, pre, codec, analyzer, out_dir) -> dict:
                                     "top1": int(correct_s[i].item()),
                                     "target_prob": float(target_prob_s[i].item()),
                                 }
-                    if not saved_vis and name == "h265" and qp == qps[len(qps) // 2]:
+                    if (not saved_vis and qp == qps[len(qps) // 2]
+                            and (name == "h265" or "h265" not in eval_codecs)):
                         _save_qualitative(out_dir / "qualitative.png", clips, x_pre, xhp)
                         saved_vis = True
 

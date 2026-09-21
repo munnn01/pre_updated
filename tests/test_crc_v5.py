@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 import torch
-from src.engine import _load_state_compat, _rate_cond, _rate_constraint_settings
+from src.engine import (
+    _evaluation_codecs,
+    _load_state_compat,
+    _rate_cond,
+    _rate_constraint_settings,
+)
 from src.models.additive_cond import AdditiveCondPreprocessor
 
 
@@ -62,6 +67,33 @@ def test_rate_constraint_validation_and_cells():
     settings = _rate_constraint_settings(cfg, [30, 35])
     assert settings["target_ratio"] == -0.05
     assert settings["cells"] == ["h264:30", "h264:35", "h265:30", "h265:35"]
+
+
+def test_rate_constraint_can_be_scoped_to_one_codec():
+    cfg = {
+        "loss": {
+            "rate_constraint": {
+                "enabled": True,
+                "target_ratio": -0.15,
+                "dual_lr": 0.015,
+                "lambda_init": 0.01,
+                "lambda_max": 1.0,
+            }
+        }
+    }
+    settings = _rate_constraint_settings(cfg, [30, 40], ("h265",))
+    assert settings["codecs"] == ["h265"]
+    assert settings["cells"] == ["h265:30", "h265:40"]
+
+
+def test_evaluation_codec_subset_validation():
+    assert _evaluation_codecs({}) == ("h264", "h265")
+    assert _evaluation_codecs({"eval": {"codecs": "h264"}}) == ("h264",)
+    assert _evaluation_codecs({"eval": {"codecs": ["h265"]}}) == ("h265",)
+    with pytest.raises(ValueError):
+        _evaluation_codecs({"eval": {"codecs": ["h264", "h264"]}})
+    with pytest.raises(ValueError):
+        _rate_constraint_settings({}, [30], ("av1",))
 
 
 def test_crc_matrix_and_notebook_protocol():
