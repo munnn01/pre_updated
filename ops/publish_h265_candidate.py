@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Publish the immutable CRC-V5 H.265 -24.26% candidate checkpoint."""
+"""Package and publish the immutable CRC-V5 H.265 candidate checkpoint."""
 
 from __future__ import annotations
 
@@ -127,6 +127,11 @@ def main() -> None:
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument(
+        "--public",
+        action="store_true",
+        help="publish publicly; default is private and account-local",
+    )
     parser.add_argument("--write-only", action="store_true")
     args = parser.parse_args()
 
@@ -143,7 +148,9 @@ def main() -> None:
     if dataset_exists(handle):
         print(f"[h265-candidate] exists: {handle}")
         return
-    command = kaggle_command() + ["datasets", "create", "-p", str(target), "-u", "-q"]
+    command = kaggle_command() + ["datasets", "create", "-p", str(target), "-q"]
+    if args.public:
+        command.append("-u")
     raise SystemExit(subprocess.run(command, text=True).returncode)
 
 

@@ -11,6 +11,9 @@ The H.265 checkpoint SHA-256 is fixed to
 It is mounted read-only, never passed to an optimizer, and checked again after
 every H.264 arm. The historical score is a positive-control reproduction, not a
 full-validation claim. A new locked shard is also evaluated to measure transfer.
+The verified bytes, source result, and manifest are published once as
+`baooo25r/crc-v5-h265-minus24-candidate-v1`. Every account mounts that same
+public dataset, preventing account-local checkpoint drift.
 
 ## H.264 treatments
 
