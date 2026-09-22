@@ -245,6 +245,8 @@ def preprocessing_loss(
     saliency_pred: torch.Tensor | None = None,
     saliency_target: torch.Tensor | None = None,
     rate_objective: torch.Tensor | None = None,
+    task_loss: torch.Tensor | None = None,
+    task_objective: torch.Tensor | None = None,
 ) -> Dict[str, torch.Tensor]:
     """Composite preprocessor loss.
 
@@ -262,7 +264,17 @@ def preprocessing_loss(
     """
     from .models.task_mask import masked_tv
 
-    l_task, _ = analyzer.accuracy_loss(x_hat, target)
+    # A constrained objective may need the same frozen-teacher task loss both
+    # for a dual update and for the primal gradient.  Accepting a precomputed
+    # value prevents a second analyzer forward (and, for sampled ensembles, a
+    # potentially different teacher).  ``task_objective`` may be an
+    # anchor-relative regret; it differs from ``l_task`` only by detached
+    # constants, but keeping it explicit makes the optimized quantity auditable.
+    if task_loss is None:
+        l_task, _ = analyzer.accuracy_loss(x_hat, target)
+    else:
+        l_task = task_loss
+    l_task_objective = l_task if task_objective is None else task_objective
     l_dist = feature_distillation(analyzer, x_source, x_hat)
     l_temp = temporal_consistency(x_source, x_hat)
     # By default the rate objective is absolute proxy/codec bpp.  Codec-native
@@ -271,7 +283,7 @@ def preprocessing_loss(
     # the real codec while its backward derivative comes from STECodec.
     l_rate_objective = bpp if rate_objective is None else rate_objective
     total = (
-        w.lam_task * l_task
+        w.lam_task * l_task_objective
         + w.omega * l_dist
         + w.beta * l_rate_objective
         + w.tau * l_temp
@@ -355,6 +367,7 @@ def preprocessing_loss(
     return {
         "loss": total,
         "loss_task": l_task.detach(),
+        "loss_task_objective": l_task_objective.detach(),
         "loss_dist": l_dist.detach(),
         "loss_rate": (bpp.detach() if torch.is_tensor(bpp) else torch.as_tensor(bpp)),
         "loss_rate_objective": l_rate_objective.detach(),

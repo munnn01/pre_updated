@@ -604,6 +604,100 @@ def _codec_rate_constraint(settings: dict, codec: str) -> dict:
         raise ValueError(f"no rate-constraint settings for codec {name!r}") from exc
 
 
+def _task_regret_constraint_settings(
+    cfg: dict,
+    qp_list: list[int],
+    codecs: tuple[str, ...] = ("h264", "h265"),
+) -> dict:
+    """Validate V13's codec/QP-conditioned task-regret constraint.
+
+    CRC-V5 minimized task loss while constraining rate to the anchor.  That
+    objective converged to an R-D pivot near zero BD-rate.  V13 reverses the
+    constrained problem: minimize the same real-codec rate ratio while one
+    projected dual per codec/QP cell limits task loss relative to the raw clip
+    encoded by the *same* codec and QP.
+    """
+    active_codecs = _codec_names(codecs, field="task_regret_constraint codecs")
+    raw = cfg.get("loss", {}).get("task_regret_constraint") or {}
+    settings = {
+        "enabled": bool(raw.get("enabled", False)),
+        "epsilon": float(raw.get("epsilon", 0.0)),
+        "dual_lr": float(raw.get("dual_lr", 0.0)),
+        "mu_init": float(raw.get("mu_init", 0.0)),
+        "mu_max": float(raw.get("mu_max", 10.0)),
+        "rate_weight": float(raw.get("rate_weight", 1.0)),
+    }
+    numeric = [
+        settings[key]
+        for key in ("epsilon", "dual_lr", "mu_init", "mu_max", "rate_weight")
+    ]
+    if not all(math.isfinite(value) for value in numeric):
+        raise ValueError("task_regret_constraint values must be finite")
+    if any(settings[key] < 0 for key in ("epsilon", "dual_lr", "mu_init", "rate_weight")):
+        raise ValueError(
+            "task_regret_constraint epsilon/dual_lr/mu_init/rate_weight "
+            "must be non-negative"
+        )
+    if settings["mu_max"] <= 0 or settings["mu_init"] > settings["mu_max"]:
+        raise ValueError(
+            "task_regret_constraint requires 0 <= mu_init <= mu_max"
+        )
+
+    raw_per_codec = raw.get("per_codec", {})
+    if raw_per_codec is None:
+        raw_per_codec = {}
+    if not isinstance(raw_per_codec, dict):
+        raise ValueError("task_regret_constraint.per_codec must be a mapping")
+    unknown = sorted(set(raw_per_codec) - {"h264", "h265"})
+    if unknown:
+        raise ValueError(
+            "task_regret_constraint.per_codec has unsupported codec(s): "
+            + ",".join(unknown)
+        )
+
+    per_codec = {}
+    for codec in active_codecs:
+        override = raw_per_codec.get(codec, {})
+        if override is None:
+            override = {}
+        if not isinstance(override, dict):
+            raise ValueError(
+                f"task_regret_constraint.per_codec.{codec} must be a mapping"
+            )
+        codec_settings = {
+            key: float(override.get(key, settings[key]))
+            for key in ("epsilon", "dual_lr", "rate_weight")
+        }
+        if not all(math.isfinite(value) for value in codec_settings.values()):
+            raise ValueError(
+                f"task_regret_constraint.per_codec.{codec} values must be finite"
+            )
+        if any(value < 0 for value in codec_settings.values()):
+            raise ValueError(
+                f"task_regret_constraint.per_codec.{codec} values must be "
+                "non-negative"
+            )
+        per_codec[codec] = codec_settings
+
+    settings["codecs"] = list(active_codecs)
+    settings["per_codec"] = per_codec
+    settings["cells"] = [
+        f"{codec}:{qp}" for codec in active_codecs for qp in qp_list
+    ]
+    return settings
+
+
+def _codec_task_regret_constraint(settings: dict, codec: str) -> dict:
+    """Return the task-regret budget, dual LR and rate weight for one codec."""
+    name = str(codec).lower()
+    try:
+        return settings["per_codec"][name]
+    except KeyError as exc:
+        raise ValueError(
+            f"no task-regret-constraint settings for codec {name!r}"
+        ) from exc
+
+
 def _evaluation_codecs(cfg: dict) -> tuple[str, ...]:
     """Real codecs requested for evaluation (both when omitted)."""
     values = cfg.get("eval", {}).get("codecs", ("h264", "h265"))
@@ -766,6 +860,14 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
         else (_ste_codec_name(codec),)
     )
     rate_constraint = _rate_constraint_settings(cfg, qp_list, training_codecs)
+    task_regret_constraint = _task_regret_constraint_settings(
+        cfg, qp_list, training_codecs
+    )
+    if rate_constraint["enabled"] and task_regret_constraint["enabled"]:
+        raise ValueError(
+            "rate_constraint and task_regret_constraint are alternative "
+            "primal-dual objectives and cannot both be enabled"
+        )
     if rate_constraint["enabled"]:
         if not isinstance(codec, STECodec):
             raise ValueError("loss.rate_constraint requires codec.kind=ste")
@@ -773,8 +875,26 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
             raise ValueError(
                 "loss.rate_constraint requires model.cond_dim=3 ([QP,h264,h265])"
             )
+    if task_regret_constraint["enabled"]:
+        if not isinstance(codec, STECodec):
+            raise ValueError(
+                "loss.task_regret_constraint requires codec.kind=ste"
+            )
+        if int(cfg.get("model", {}).get("cond_dim", 1)) != 3:
+            raise ValueError(
+                "loss.task_regret_constraint requires model.cond_dim=3 "
+                "([QP,h264,h265])"
+            )
     initial_dual = rate_constraint["lambda_init"] if rate_constraint["enabled"] else 0.0
     rate_duals = {cell: initial_dual for cell in rate_constraint["cells"]}
+    initial_task_dual = (
+        task_regret_constraint["mu_init"]
+        if task_regret_constraint["enabled"]
+        else 0.0
+    )
+    task_duals = {
+        cell: initial_task_dual for cell in task_regret_constraint["cells"]
+    }
 
     # Balanced, randomized blocks prevent codec/QP cells from being confounded
     # with fine-tune time or LR drift. A single-codec calibration visits its five
@@ -854,6 +974,9 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
         for cell, value in (st.get("rate_duals") or {}).items():
             if cell in rate_duals:
                 rate_duals[cell] = float(value)
+        for cell, value in (st.get("task_duals") or {}).items():
+            if cell in task_duals:
+                task_duals[cell] = float(value)
         print(f"[train] resumed {last_path} @ epoch {start_epoch}, step {step}")
     if start_epoch >= epochs:
         print("[train] resume: already at target epochs; nothing to do")
@@ -864,7 +987,8 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                     "sched": sched.state_dict() if sched is not None else None,
                     "cfg": cfg, "epoch": ep, "global_step": step,
                     "best_val": best_val, "no_improve": no_improve,
-                    "rate_duals": rate_duals}, path)
+                    "rate_duals": rate_duals,
+                    "task_duals": task_duals}, path)
 
     pre.train()
     print(f"[train] {tag} | {n_train} clips | {len(train_loader)} steps/epoch | "
@@ -886,6 +1010,21 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
             f"per_codec={codec_settings_log} "
             f"lambda_init={rate_constraint['lambda_init']:.4g} "
             f"lambda_max={rate_constraint['lambda_max']:.4g}",
+            flush=True,
+        )
+    if task_regret_constraint["enabled"]:
+        codec_settings_log = ", ".join(
+            f"{name}(epsilon={values['epsilon']:+.3f},"
+            f"dual_lr={values['dual_lr']:.4g},"
+            f"rate_weight={values['rate_weight']:.4g})"
+            for name, values in task_regret_constraint["per_codec"].items()
+        )
+        print(
+            "[train] codec/QP task-regret constraint: "
+            f"codecs={','.join(task_regret_constraint['codecs'])} "
+            f"per_codec={codec_settings_log} "
+            f"mu_init={task_regret_constraint['mu_init']:.4g} "
+            f"mu_max={task_regret_constraint['mu_max']:.4g}",
             flush=True,
         )
     tracker = make_tracker(Path(cfg.get("out_dir", "outputs")),
@@ -924,9 +1063,14 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                 qp, cfg, clips.shape[0], clips.device, clips.dtype,
                 codec=codec_name,
             )
-            # A2: keep the sampled teacher fixed for saliency, task loss, and
-            # feature distillation within this step.
-            pinned = bool(weights.use_task_mask and hasattr(analyzer, "pin_active"))
+            # Keep a sampled teacher fixed for every semantic measurement in
+            # the step.  V13 compares treatment and raw-codec anchor losses, so
+            # drawing a different teacher for either arm would inject a false
+            # task-regret signal into the dual update.
+            pinned = bool(
+                (weights.use_task_mask or task_regret_constraint["enabled"])
+                and hasattr(analyzer, "pin_active")
+            )
             if pinned:
                 analyzer.pin_active()
             try:
@@ -937,46 +1081,100 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                     x_pre = pre(clips, cond, mask=mask)
                 x_hat, bpp = codec(x_pre, q)
                 rate_objective = None
+                task_objective = None
+                task_loss_value = None
+                cell = f"{codec_name}:{qp}"
+                need_anchor = bool(
+                    rate_constraint["enabled"]
+                    or task_regret_constraint["enabled"]
+                )
+                if need_anchor:
+                    anchor_hat, anchor_bpp = codec.compress_decompress(clips, q)
+                    anchor_bpp_t = bpp.new_tensor(max(float(anchor_bpp), 1e-8))
+                else:
+                    anchor_hat = None
+                    anchor_bpp_t = bpp.new_tensor(float("nan"))
+
+                rate_violation = float("nan")
+                task_violation = float("nan")
+                task_anchor_t = bpp.new_tensor(float("nan"))
+                task_regret_t = bpp.new_tensor(float("nan"))
                 if rate_constraint["enabled"]:
                     codec_rate = _codec_rate_constraint(rate_constraint, codec_name)
                     # Same content, codec and QP as the treatment arm.  The
                     # raw encode is the constraint denominator and has no
                     # gradient; bpp(pre) keeps the STE proxy gradient.
-                    _, anchor_bpp = codec.compress_decompress(clips, q)
-                    anchor_bpp_t = bpp.new_tensor(max(float(anchor_bpp), 1e-8))
                     rate_objective = (
                         bpp / anchor_bpp_t
                         - 1.0
                         - codec_rate["target_ratio"]
                     )
-                    cell = f"{codec_name}:{qp}"
-                    violation = float(rate_objective.detach())
+                    rate_violation = float(rate_objective.detach())
                     rate_duals[cell] = min(
                         rate_constraint["lambda_max"],
                         max(
                             0.0,
                             rate_duals[cell]
-                            + codec_rate["dual_lr"] * violation,
+                            + codec_rate["dual_lr"] * rate_violation,
                         ),
                     )
                     effective_w = replace(step_w, beta=rate_duals[cell])
                 else:
-                    anchor_bpp_t = bpp.new_tensor(float("nan"))
-                    violation = float("nan")
-                    cell = f"{codec_name}:{qp}"
                     effective_w = step_w
                 if hasattr(pre, "post_restore"):
                     _codec_name = _ste_codec_name(codec)
                     x_hat = pre.post_restore(x_hat, cond, codec=_codec_name) if hasattr(pre.post_restore, "__call__") and "codec" in pre.post_restore.__code__.co_varnames else pre.post_restore(x_hat, cond)
+
+                if task_regret_constraint["enabled"]:
+                    codec_task = _codec_task_regret_constraint(
+                        task_regret_constraint, codec_name
+                    )
+                    # The anchor is the raw clip passed through the same real
+                    # codec/QP.  Its loss is detached: it defines the allowable
+                    # regret, while gradients flow only through prep+codec.
+                    with torch.no_grad():
+                        task_anchor_t, _ = analyzer.accuracy_loss(
+                            anchor_hat, target
+                        )
+                    task_loss_value, _ = analyzer.accuracy_loss(x_hat, target)
+                    task_regret_t = task_loss_value - task_anchor_t.detach()
+                    task_objective = task_regret_t - codec_task["epsilon"]
+                    task_violation = float(task_objective.detach())
+                    task_duals[cell] = min(
+                        task_regret_constraint["mu_max"],
+                        max(
+                            0.0,
+                            task_duals[cell]
+                            + codec_task["dual_lr"] * task_violation,
+                        ),
+                    )
+                    # Reverse CRC-V5's constrained direction: rate is now the
+                    # fixed primal objective and task regret owns the dual.
+                    rate_objective = bpp / anchor_bpp_t - 1.0
+                    effective_w = replace(
+                        step_w,
+                        lam_task=task_duals[cell],
+                        beta=codec_task["rate_weight"],
+                    )
                 parts = preprocessing_loss(analyzer, clips, x_hat, bpp, target, effective_w,
                                            x_pre=x_pre, task_mask=mask,
                                            saliency_pred=getattr(pre, "_last_w", None),
                                            saliency_target=getattr(pre, "_last_w_target", None),
-                                           rate_objective=rate_objective)
+                                           rate_objective=rate_objective,
+                                           task_loss=task_loss_value,
+                                           task_objective=task_objective)
                 parts["rate_anchor_bpp"] = anchor_bpp_t.detach()
-                parts["rate_excess_ratio"] = bpp.detach() / anchor_bpp_t - 1.0 if rate_constraint["enabled"] else bpp.new_tensor(float("nan"))
-                parts["rate_violation"] = bpp.new_tensor(violation)
+                parts["rate_excess_ratio"] = (
+                    bpp.detach() / anchor_bpp_t - 1.0
+                    if need_anchor
+                    else bpp.new_tensor(float("nan"))
+                )
+                parts["rate_violation"] = bpp.new_tensor(rate_violation)
                 parts["rate_dual"] = bpp.new_tensor(rate_duals[cell])
+                parts["task_anchor_loss"] = task_anchor_t.detach()
+                parts["task_regret"] = task_regret_t.detach()
+                parts["task_violation"] = bpp.new_tensor(task_violation)
+                parts["task_dual"] = bpp.new_tensor(task_duals[cell])
             finally:
                 if pinned:
                     analyzer.unpin_active()
@@ -1008,7 +1206,9 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                              dist=f"{vals['loss_dist']:.3f}",
                              bpp=f"{vals['loss_rate']:.3f}",
                              rex=f"{vals['rate_excess_ratio']:+.3f}",
-                             dual=f"{vals['rate_dual']:.3f}",
+                             rdual=f"{vals['rate_dual']:.3f}",
+                             treg=f"{vals['task_regret']:+.3f}",
+                             tdual=f"{vals['task_dual']:.3f}",
                              tmp=f"{vals['loss_temp']:.4f}",
                              dlt=f"{vals['loss_delta']:.4f}",
                              tv=f"{vals['loss_tv']:.4f}",
@@ -1067,6 +1267,27 @@ def _fit(cfg, pre, codec, analyzer, train_loader, val_loader, prep_batch,
                 {
                     "settings": {k: v for k, v in rate_constraint.items() if k != "cells"},
                     "duals": rate_duals,
+                    "steps": step,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+    if task_regret_constraint["enabled"]:
+        state_path = (
+            Path(cfg.get("out_dir", "outputs"))
+            / "task_regret_constraint_state.json"
+        )
+        state_path.write_text(
+            json.dumps(
+                {
+                    "settings": {
+                        key: value
+                        for key, value in task_regret_constraint.items()
+                        if key != "cells"
+                    },
+                    "duals": task_duals,
                     "steps": step,
                 },
                 indent=2,
@@ -1868,9 +2089,24 @@ def _sequence_reports(out_dir: Path, sequence_store: dict, qps: list[int]):
         for row in bd_rows:
             w.writerow(row + ["target_prob"])
     json_path = out_dir / "sequence_bd_rate.json"
+    finite_by_codec = {
+        codec: sum(
+            metric["bd_rate_pct"] is not None
+            for record in per_sequence.values()
+            for name, metric in record["bd_prep_gain"].items()
+            if name == f"prep+{codec} vs {codec}"
+        )
+        for codec in ("h264", "h265")
+    }
+    sequences_with_bd = sum(
+        any(metric["bd_rate_pct"] is not None for metric in record["bd_prep_gain"].values())
+        for record in per_sequence.values()
+    )
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({"metric": "target_prob", "n_sequences": len(sequence_store),
-                   "sequences_with_bd": len(per_sequence), "results": per_sequence}, f, indent=2)
+                   "sequences_with_bd": sequences_with_bd,
+                   "sequences_with_finite_bd_by_codec": finite_by_codec,
+                   "results": per_sequence}, f, indent=2)
     print(f"[eval] wrote {points_path}, {bd_path}, {json_path}")
     return {"per_sequence": per_sequence, "per_sequence_metric": "target_prob"}
 
