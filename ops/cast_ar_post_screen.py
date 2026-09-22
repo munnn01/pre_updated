@@ -15,10 +15,19 @@ import hashlib
 import json
 import math
 import random
+import sys
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
+
+# ``python ops/cast_ar_post_screen.py`` sets sys.path[0] to ``ops/`` rather
+# than the repository root.  Kaggle invokes the file in exactly that form, so
+# make the project packages importable without relying on an ambient
+# PYTHONPATH.  This is intentionally before every ``src.*`` import below.
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 import numpy as np
 import torch
@@ -409,4 +418,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

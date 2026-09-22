@@ -1,3 +1,7 @@
+import subprocess
+import sys
+from pathlib import Path
+
 import torch
 
 from src.models.cast_ar import CASTTemporalPost
@@ -54,3 +58,13 @@ def test_cast_rejects_bad_metadata_shape():
         assert "picture_types" in str(exc)
     else:
         raise AssertionError("bad picture-type shape was accepted")
+
+
+def test_cast_screen_entrypoint_imports_src_outside_repo(tmp_path):
+    script = Path(__file__).resolve().parents[1] / "ops" / "cast_ar_post_screen.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"], cwd=tmp_path,
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--codec {h264,h265}" in result.stdout
