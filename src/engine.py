@@ -60,6 +60,7 @@ from .metrics import aggregate_metrics, bd_metric, bd_rate, sequence_metrics
 from .models import (
     AdditiveCondPreprocessor,
     AdditivePreprocessor,
+    AttentiveAdditivePreprocessor,
     CompressAICodec,
     STECodec,
     DualCodecSandwich,
@@ -113,6 +114,16 @@ def _build_models(cfg: dict, device: torch.device, role: str = "train"):
         # on the shared trunk so the edit can condition on the rate operating
         # point the engine already passes as ``cond``. 10,371 params.
         pre = AdditiveCondPreprocessor(
+            temporal_frames=int(m.get("temporal_frames", 8)),
+            strength=float(m.get("strength", 1.0)),
+            cond_dim=int(m.get("cond_dim", 1)),
+        ).to(device)
+    elif arch == "additive_attn":
+        # Attentive dual-branch additive editor: same spatial/temporal branches
+        # as the additive lineage, but the sigmoid-gate fusion is replaced by a
+        # per-channel softmax attention whose logits are modulated by FiLM(QP)
+        # (Zhao's "conditional attention"). Identity at init (zero-init to_rgb).
+        pre = AttentiveAdditivePreprocessor(
             temporal_frames=int(m.get("temporal_frames", 8)),
             strength=float(m.get("strength", 1.0)),
             cond_dim=int(m.get("cond_dim", 1)),
@@ -215,7 +226,7 @@ def _build_models(cfg: dict, device: torch.device, role: str = "train"):
             edit_kind=str(m.get("edit_kind", "residual")),
         ).to(device)
     else:
-        raise ValueError(f"model.arch must be 'unet', 'additive', 'additive_cond', 'additive_dct', 'upvcm', 'sandwich', 'percodec_sandwich', 'dualpost' or 'dualcodec', got {arch!r}")
+        raise ValueError(f"model.arch must be 'unet', 'additive', 'additive_cond', 'additive_attn', 'additive_dct', 'upvcm', 'sandwich', 'percodec_sandwich', 'dualpost' or 'dualcodec', got {arch!r}")
     cc = cfg["codec"]
     kind = cc.get("kind", "compressai")
     if kind == "entropy":
@@ -235,6 +246,9 @@ def _build_models(cfg: dict, device: torch.device, role: str = "train"):
             inter=cc.get("inter", True),
             colorspace=cc.get("colorspace", "yuv420"),
             chroma_step_scale=cc.get("chroma_step_scale", 2.0),
+            motion=cc.get("motion", False),
+            motion_range=cc.get("motion_range", 8),
+            motion_block=cc.get("motion_block", 16),
             n_components=cc.get("entropy_components", 3),
         ).to(device)
     elif kind in ("virtual", "ste"):
@@ -249,6 +263,9 @@ def _build_models(cfg: dict, device: torch.device, role: str = "train"):
             inter=cc.get("inter", True),
             colorspace=cc.get("colorspace", "yuv420"),
             chroma_step_scale=cc.get("chroma_step_scale", 2.0),
+            motion=cc.get("motion", False),
+            motion_range=cc.get("motion_range", 8),
+            motion_block=cc.get("motion_block", 16),
         ).to(device)
     else:
         proxy = CompressAICodec(

@@ -88,6 +88,9 @@ class VirtualCodec(nn.Module):
         inter: bool = True,
         colorspace: str = "yuv420",
         chroma_step_scale: float = 2.0,
+        motion: bool = False,
+        motion_range: int = 8,
+        motion_block: int = 16,
     ):
         super().__init__()
         if isinstance(qualities, int):
@@ -95,6 +98,24 @@ class VirtualCodec(nn.Module):
         self.qualities = list(qualities)
         self.block = int(block)
         self.inter = bool(inter)
+        # Motion-compensated P-frame prediction (default OFF -> the legacy
+        # zero-motion frame-difference proxy, bit-for-bit unchanged). A real
+        # x264/x265 encoder does block motion estimation + compensation, so the
+        # residual it transforms is the MOTION-COMPENSATED residual, not the raw
+        # inter-frame difference this proxy used. On moving content the two
+        # differ by a lot, and the differentiable-proxy literature (Zhao
+        # arXiv:2512.15331, NHK GOP-based PCS'24, Google Sandwiched arXiv:2402.05887)
+        # traces the transfer gap to exactly this fidelity: unless the proxy
+        # rewards reducing the MC residual, the preprocessor learns edits the
+        # real inter-coder cannot carry cheaply. With motion on, the proxy's
+        # gradient rewards temporally coherent edits (patterns that translate
+        # with the block motion the codec can track), which is the video-native
+        # lever action recognition needs.
+        self.motion = bool(motion)
+        self.motion_range = int(motion_range)
+        self.motion_block = int(motion_block)
+        if self.motion and (self.motion_range < 1 or self.motion_block < 1):
+            raise ValueError("motion_range and motion_block must be >= 1 when motion=True")
         if colorspace not in ("rgb", "yuv420"):
             raise ValueError(f"colorspace must be 'rgb' or 'yuv420', got {colorspace!r}")
         self.colorspace = colorspace
@@ -130,6 +151,44 @@ class VirtualCodec(nn.Module):
     def _crop(x: torch.Tensor, hw) -> torch.Tensor:
         h, w = hw
         return x[..., :h, :w]
+
+    # -- block motion estimation + compensation ----------------------------
+    def _motion_compensate(self, cur: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+        """Block integer-pel motion compensation of ``ref`` toward ``cur``.
+
+        For every ``motion_block`` x ``motion_block`` block, pick the integer
+        displacement in ``[-motion_range, motion_range]^2`` that minimises the
+        block SAD between ``cur`` and the shifted ``ref``, then return ``ref``
+        gathered at those per-block displacements. This mirrors a codec's block
+        motion estimation: the displacement is an ARGMIN decision (taken under
+        ``no_grad`` -- the codec's ME is not part of the differentiable model),
+        but the predictor is a plain slice of ``ref`` so gradients still flow to
+        the reference pixels, hence to the preprocessor that produced them.
+
+        Both tensors are ``[N, C, H, W]`` in plane space; used for luma and
+        chroma independently (as the real codec derives chroma prediction from
+        the same block grid)."""
+        N, C, H, W = cur.shape
+        mb, mr = self.motion_block, self.motion_range
+        Hp, Wp = math.ceil(H / mb) * mb, math.ceil(W / mb) * mb
+        cur_p = F.pad(cur, (0, Wp - W, 0, Hp - H), mode="replicate")
+        ref_p = F.pad(ref, (0, Wp - W, 0, Hp - H), mode="replicate")
+        # Border-extended reference so every candidate shift stays in bounds.
+        ref_pp = F.pad(ref_p, (mr, mr, mr, mr), mode="replicate")
+        nH, nW = Hp // mb, Wp // mb
+        best_sad = cur.new_full((N, 1, nH, nW), float("inf"))
+        best_pred = ref_p                                   # zero-MV predictor
+        for dy in range(-mr, mr + 1):
+            for dx in range(-mr, mr + 1):
+                shifted = ref_pp[:, :, mr + dy: mr + dy + Hp, mr + dx: mr + dx + Wp]
+                with torch.no_grad():
+                    diff = (cur_p - shifted).abs().sum(dim=1, keepdim=True)
+                    sad = F.avg_pool2d(diff, kernel_size=mb, stride=mb)  # [N,1,nH,nW]
+                    better = sad < best_sad
+                    best_sad = torch.where(better, sad, best_sad)
+                better_px = better.repeat_interleave(mb, dim=2).repeat_interleave(mb, dim=3)
+                best_pred = torch.where(better_px, shifted, best_pred)
+        return best_pred[:, :, :H, :W]
 
     # -- block DCT / inverse (channel layout: [N, C*bs*bs, H/bs, W/bs]) ----
     def _dct(self, r: torch.Tensor) -> torch.Tensor:
@@ -199,13 +258,20 @@ class VirtualCodec(nn.Module):
                 # colourspace damage (closed loop, like the rgb path)
                 y_cur, c_cur = rgb_to_yuv420_planes(frame)
                 y_ref, c_ref = prev                               # planes
-                y_res, y_hw = self._pad(y_cur - y_ref)
-                c_res, c_hw = self._pad(c_cur - c_ref)
+                # Motion-compensated predictor (block ME on each plane) when
+                # enabled; otherwise the legacy zero-motion reference.
+                if self.motion:
+                    y_pred = self._motion_compensate(y_cur, y_ref)
+                    c_pred = self._motion_compensate(c_cur, c_ref)
+                else:
+                    y_pred, c_pred = y_ref, c_ref
+                y_res, y_hw = self._pad(y_cur - y_pred)
+                c_res, c_hw = self._pad(c_cur - c_pred)
                 y_hat, y_bits = self._quant_rate(self._dct(y_res), step, training)
                 c_hat, c_bits = self._quant_rate(self._dct(c_res), c_step, training)
                 y_rec = self._crop(self._idct(y_hat * step, 1, *y_hw), y_hw)
                 c_rec = self._crop(self._idct(c_hat * c_step, 2, *c_hw), c_hw)
-                frame_hat = yuv420_planes_to_rgb(y_ref + y_rec, c_ref + c_rec)
+                frame_hat = yuv420_planes_to_rgb(y_pred + y_rec, c_pred + c_rec)
             else:                                                 # intra frame
                 y_cur, c_cur = rgb_to_yuv420_planes(frame)
                 y_res, y_hw = self._pad(y_cur)
@@ -228,7 +294,10 @@ class VirtualCodec(nn.Module):
         total_bits = x.new_zeros(())
         for t in range(T):
             frame = x[:, :, t]
-            pred = prev if self.inter and prev is not None else torch.zeros_like(frame)
+            if self.inter and prev is not None:
+                pred = self._motion_compensate(frame, prev) if self.motion else prev
+            else:
+                pred = torch.zeros_like(frame)
             residual, hw = self._pad(frame - pred)
             ph, pw = residual.shape[-2:]
             y_hat, bits = self._quant_rate(self._dct(residual), step, training)
