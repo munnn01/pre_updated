@@ -10,7 +10,10 @@ from .codec import CompressAICodec
 from .virtual_codec import VirtualCodec
 from .ste_codec import STECodec
 from .importance_tube import ImportanceTubeSuppress
+from .cast_ar import CASTTemporalPost
 
 __all__ = ["VideoPreprocessor", "AdditivePreprocessor", "AdditiveCondPreprocessor",
            "DCTProjectedAdditivePreprocessor",
-           "UPVCMPreprocessor", "SandwichPreprocessor", "PerCodecPostSandwich", "DualPostSandwich", "DualCodecSandwich", "CompressAICodec", "VirtualCodec", "STECodec", "ImportanceTubeSuppress"]
+           "UPVCMPreprocessor", "SandwichPreprocessor", "PerCodecPostSandwich",
+           "DualPostSandwich", "DualCodecSandwich", "CompressAICodec",
+           "VirtualCodec", "STECodec", "ImportanceTubeSuppress", "CASTTemporalPost"]

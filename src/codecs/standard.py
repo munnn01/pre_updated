@@ -25,6 +25,7 @@ import torch
 
 _ENCODER = {"h264": "libx264", "h265": "libx265"}
 _MUXER = {"h264": "h264", "h265": "hevc"}  # raw-bitstream muxer (NOT "264"/"265")
+_PICTURE_TYPE_ID = {"I": 0, "P": 1, "B": 2}
 
 
 def ffmpeg_available() -> bool:
@@ -60,6 +61,18 @@ class StandardCodec:
         self, clip: np.ndarray, qp: int | None = None
     ) -> Tuple[np.ndarray, float]:
         """clip: [T,H,W,C] uint8 RGB. Returns (recon [T,H,W,C] uint8, bpp)."""
+        recon, bpp, _ = self._encode_decode_clip_with_metadata(clip, qp=qp)
+        return recon, bpp
+
+    def _encode_decode_clip_with_metadata(
+        self, clip: np.ndarray, qp: int | None = None
+    ) -> Tuple[np.ndarray, float, List[int]]:
+        """Encode/decode one clip and expose the realised I/P/B picture types.
+
+        Picture types come from the actual elementary stream through ffprobe;
+        this is deliberately different from inferring a GOP pattern from frame
+        indices.  The returned ids are I=0, P=1, B=2, other/unknown=3.
+        """
         t, h, w, c = clip.shape
         assert c == 3
         qp = self.qp if qp is None else qp
@@ -86,6 +99,24 @@ class StandardCodec:
             _ = enc
             coded_bytes = bitstream.stat().st_size
 
+            probe = subprocess.run(
+                [
+                    "ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "frame=pict_type", "-of", "csv=p=0",
+                    str(bitstream),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+            picture_types = [
+                _PICTURE_TYPE_ID.get(line.strip().split(",")[0], 3)
+                for line in probe.stdout.splitlines()
+                if line.strip()
+            ]
+
             # Encoded stream -> raw RGB back.
             dec = subprocess.run(
                 [
@@ -109,8 +140,13 @@ class StandardCodec:
                 pad = np.repeat(recon[-1:], t - n, axis=0)
                 recon = np.concatenate([recon, pad], axis=0)
             recon = recon[:t]
+        if not picture_types:
+            picture_types = [3] * t
+        elif len(picture_types) < t:
+            picture_types.extend([picture_types[-1]] * (t - len(picture_types)))
+        picture_types = picture_types[:t]
         bpp = 8.0 * coded_bytes / (t * h * w)
-        return recon, bpp
+        return recon, bpp, picture_types
 
     # -- batch of clips ----------------------------------------------------
     @torch.no_grad()
@@ -129,6 +165,24 @@ class StandardCodec:
             bpps.append(bpp)
         out = torch.from_numpy(np.stack(recons)).float().div_(255.0).to(x.device)
         return out, [float(v) for v in bpps]
+
+    @torch.no_grad()
+    def compress_decompress_items_with_metadata(
+        self, x: torch.Tensor, qp: int | None = None
+    ) -> Tuple[torch.Tensor, List[float], torch.Tensor]:
+        """Real codec batch plus per-frame picture-type ids ``[B,T]``."""
+        b, c, t, h, w = x.shape
+        arr = (x.clamp(0, 1) * 255).round().byte().cpu().numpy()
+        recons, bpps, picture_types = [], [], []
+        for i in range(b):
+            clip = np.transpose(arr[i], (1, 2, 3, 0))
+            rec, bpp, types = self._encode_decode_clip_with_metadata(clip, qp=qp)
+            recons.append(np.transpose(rec, (3, 0, 1, 2)))
+            bpps.append(float(bpp))
+            picture_types.append(types)
+        out = torch.from_numpy(np.stack(recons)).float().div_(255.0).to(x.device)
+        types = torch.tensor(picture_types, dtype=torch.long, device=x.device)
+        return out, bpps, types
 
     @torch.no_grad()
     def compress_decompress(
