@@ -3,6 +3,7 @@
 import numpy as np
 
 from src.models.rcts import ACTIONS, make_candidates, select_teacher_action
+from ops.rcts_pilot import balanced_indices
 
 
 def test_candidates_are_bounded_and_temporal_first_frame_is_identity():
@@ -25,3 +26,13 @@ def test_teacher_uses_measured_rate_subject_to_regret_and_flip():
         {"name": "safe", "bpp": 0.8, "ce": 0.21, "correct": True},
     ]
     assert select_teacher_action(rows, max_ce_regret=0.02) == 3
+
+
+def test_balanced_subset_spans_full_class_range():
+    records = [{"path": f"class_{i}/clip.mp4", "label": i} for i in range(400)]
+    picked = balanced_indices(records, 80, "rcts-train-v1")
+    assert len(picked) == 80
+    assert len(set(picked)) == 80
+    assert max(picked) >= 300
+    assert min(picked) < 100
+    assert picked == balanced_indices(records, 80, "rcts-train-v1")

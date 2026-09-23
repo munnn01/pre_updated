@@ -56,11 +56,15 @@ def balanced_indices(records: list[dict], count: int, salt: str) -> list[int]:
         by_class.setdefault(int(record["label"]), []).append((rank, index))
     for rows in by_class.values():
         rows.sort()
+    class_order = sorted(
+        by_class,
+        key=lambda cls: hashlib.sha256(f"{salt}\0class\0{cls}".encode()).hexdigest(),
+    )
     chosen: list[int] = []
     depth = 0
     while len(chosen) < min(count, len(records)):
         advanced = False
-        for cls in sorted(by_class):
+        for cls in class_order:
             if depth < len(by_class[cls]):
                 chosen.append(by_class[cls][depth][1])
                 advanced = True
