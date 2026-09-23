@@ -1,0 +1,41 @@
+{
+  "experiment": "codec_search_ar_confirm_v1",
+  "pilot_code_commit": "e8f29d6300df576a8c8869b6befcf9fd9d957548",
+  "checkpoint_type": "frozen_calibration_policy; no newly trained .pth weights",
+  "dataset": "qktttttttttt/kineticscleaned",
+  "canonical_test_fingerprint_prefix": "30f083f8520a",
+  "pilot_train_fingerprint": "db5eb4e26c7dfd02",
+  "pilot_val_fingerprint": "383b5b2431f2a822",
+  "confirm_split": "test",
+  "confirm_salt": "codec-search-confirm-test-v1",
+  "confirm_clips": 1000,
+  "shards": 4,
+  "qps": [30, 35, 40, 45, 50],
+  "frames": 16,
+  "frame_size": 128,
+  "temporal_stride": 2,
+  "preset": "medium",
+  "primary_model": "r2plus1d_18",
+  "primary_weights": "R2Plus1D_18_Weights.KINETICS400_V1",
+  "cross_model": "r3d_18",
+  "cross_weights": "R3D_18_Weights.KINETICS400_V1",
+  "candidates": ["identity128", "area112", "area96", "area112_up128", "blur020_128", "blur040_128"],
+  "policies": {
+    "h264": {
+      "active": true,
+      "kl_slack": 0.1,
+      "feature_slack": 0.05,
+      "pilot_calibration_sha256": "553af3dfbf333c05f6c86e7defcd0cc25438d034f2f78e250da1772fa2ba114e",
+      "pilot_result_sha256": "0c3b61ad025251052030a67d95a209adb86e503beebf42af64afce085e4122f9"
+    },
+    "h265": {
+      "active": true,
+      "kl_slack": 0.1,
+      "feature_slack": 0.05,
+      "pilot_calibration_sha256": "55f58741c5012fb2dcb021a7673272d0178e9895cfcda83a04c979f3bffe7489",
+      "pilot_result_sha256": "ead6492201eabf60c479ced796a8846ac20948b63996251cc79ed35a489321ef"
+    }
+  },
+  "primary_success_rule": "At least one codec has aggregate 1000-clip matched-model Top-1 BD-rate strictly below -15 percent versus identity128. No threshold or candidate changes after viewing confirmation outcomes.",
+  "secondary_reports": ["paired clip bootstrap 95 percent interval", "per-QP Top-1 and bpp", "cross-model Top-1 BD-rate"]
+}

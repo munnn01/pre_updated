@@ -50,7 +50,14 @@ def as_video(rgb: np.ndarray) -> torch.Tensor:
     return torch.from_numpy(rgb.transpose(3, 0, 1, 2).copy())[None].float().div_(255.0)
 
 
-def case_for_clip(dataset, index, analyzer, codec, cross=None):
+def case_for_clip(dataset, index, analyzer, codec, cross=None, cross_limits=None):
+    """Measure every candidate; optionally score only anchor/selection on cross model.
+
+    ``cross_limits`` is used only by the frozen large-scale confirmation. The
+    pilot's default behavior (all cross-arm scores, schema 1) is unchanged.
+    """
+    if cross_limits is not None and cross is None:
+        raise ValueError("cross_limits requires a cross analyzer")
     source, label, meta = dataset[index]
     source = source.unsqueeze(0)
     rgb = (source[0].permute(1, 2, 3, 0).numpy() * 255).round().astype(np.uint8)
@@ -66,6 +73,7 @@ def case_for_clip(dataset, index, analyzer, codec, cross=None):
     measurements = []
     for qp in QPS:
         candidates = []
+        cross_decodes = []
         for name, candidate in variants.items():
             t, h, w, _ = candidate.shape
             reconstructed, native_bpp = codec._encode_decode_clip(candidate, qp=qp)
@@ -82,14 +90,23 @@ def case_for_clip(dataset, index, analyzer, codec, cross=None):
                 "correct": bool(logits.argmax(1).item() == label),
                 "target_prob": float(logits.softmax(1)[0, label].item()),
             }
-            if cross is not None:
+            if cross is not None and cross_limits is None:
                 other, _ = predict_and_feature(cross, as_video(reconstructed))
                 row["cross_correct"] = bool(other.argmax(1).item() == label)
                 row["cross_target_prob"] = float(other.softmax(1)[0, label].item())
+            elif cross is not None:
+                cross_decodes.append(reconstructed)
             candidates.append(row)
+        if cross_limits is not None:
+            picked = selected(candidates, cross_limits)
+            for i in {0, picked}:
+                other, _ = predict_and_feature(cross, as_video(cross_decodes[i]))
+                candidates[i]["cross_correct"] = bool(other.argmax(1).item() == label)
+                candidates[i]["cross_target_prob"] = float(other.softmax(1)[0, label].item())
         measurements.append({"qp": qp, "candidates": candidates})
     return {
-        "schema": 1, "sequence_id": str(meta["sequence_id"]),
+        "schema": 2 if cross_limits is not None else 1,
+        "sequence_id": str(meta["sequence_id"]),
         "codec": codec.codec, "source_correct": bool(source_label == label),
         "source_confidence": source_confidence, "clean_correct": clean,
         "measurements": measurements,
