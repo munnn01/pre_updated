@@ -115,8 +115,15 @@ def main() -> None:
     if target_is_active(handle, environment):
         raise SystemExit(f"refusing duplicate push: {handle} is active")
     command = kaggle_command() + ["kernels", "push", "-p", str(push_dir)]
-    result = subprocess.run(command, text=True, env=environment, check=False)
-    raise SystemExit(result.returncode)
+    result = subprocess.run(
+        command, capture_output=True, text=True, env=environment, check=False
+    )
+    response = (result.stdout + result.stderr).strip()
+    if response:
+        print(response, flush=True)
+    # Some Kaggle CLI releases return zero even for a server-side push error.
+    if result.returncode or "successfully pushed" not in response.lower():
+        raise SystemExit(result.returncode or 1)
 
 
 if __name__ == "__main__":
