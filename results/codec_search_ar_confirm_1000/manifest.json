@@ -1,0 +1,78 @@
+{
+  "release": "codec_search_ar_confirm_1000_v1",
+  "scope": "research artifact for frozen r2plus1d_18; not a universal AR codec or production encoder",
+  "dataset": "qktttttttttt/kineticscleaned",
+  "split": "test",
+  "videos": 1000,
+  "qps": [
+    30,
+    35,
+    40,
+    45,
+    50
+  ],
+  "test_fingerprint": "aae3888f3ae34d08",
+  "pilot_code_commit": "e8f29d6300df576a8c8869b6befcf9fd9d957548",
+  "confirm_code_commit": "0fab4b95ae65e2e93ff1985a6491e2e3bf38dec1",
+  "frozen_policy_sha256": "eb645691f74b3252e1748f64704409baef918c00168f82ebbd523e9d66c3007c",
+  "primary_model": "r2plus1d_18",
+  "cross_model": "r3d_18",
+  "files": {
+    "h264_result.json": {
+      "sha256": "bee2b9a6bc46871282f4f42e298a8eeb5d5e5977b922efb6cfc278acdf896eb2",
+      "bytes": 5771
+    },
+    "h264_shards.tar.gz": {
+      "sha256": "28634dcfe18d4292604ae1e89308ea1d77e857ae933d7de5d4f0ca3dd1bd49d4",
+      "bytes": 1518923
+    },
+    "h265_result.json": {
+      "sha256": "8dcd55cf9bd22d311431c409f07668ae0d1f145eaa5c7b5811ff1abfd7edeb6d",
+      "bytes": 5759
+    },
+    "h265_shards.tar.gz": {
+      "sha256": "81b62b3558cb1246a214292d65dcbf9aef0c18518cb05ba60474c7928862a4a1",
+      "bytes": 1515963
+    }
+  },
+  "results": {
+    "h264": {
+      "primary_bd_rate_top1_pct": -24.877178283495617,
+      "primary_bootstrap_ci95_pct": [
+        -26.82324580268386,
+        -22.937379456412366
+      ],
+      "cross_bd_rate_top1_pct": -1.0312074642522484,
+      "cross_bootstrap_ci95_pct": [
+        -3.395937134577008,
+        1.438310437298921
+      ],
+      "source_result_sha256": "767591ca5bb29edae8a600d5cbbdc18c63ac937cac4bb68ff46f9f604fae30dc",
+      "notebooks": [
+        "https://www.kaggle.com/code/trnhlng/codec-search-confirm-h264-s0",
+        "https://www.kaggle.com/code/baoancut/codec-search-confirm-h264-s1",
+        "https://www.kaggle.com/code/huolgggnuyen/codec-search-confirm-h264-s2",
+        "https://www.kaggle.com/code/shungg05/codec-search-confirm-h264-s3"
+      ]
+    },
+    "h265": {
+      "primary_bd_rate_top1_pct": -16.087038094851692,
+      "primary_bootstrap_ci95_pct": [
+        -17.44479357060985,
+        -14.736218649230446
+      ],
+      "cross_bd_rate_top1_pct": -0.9910317246829115,
+      "cross_bootstrap_ci95_pct": [
+        -2.4498545101440863,
+        0.4359347529108825
+      ],
+      "source_result_sha256": "6656c8683e5c3174539eff83b5798817e557b7985bb04325bf14b7c4b2e3df55",
+      "notebooks": [
+        "https://www.kaggle.com/code/trnhlng/codec-search-confirm-h265-s0",
+        "https://www.kaggle.com/code/baoancut/codec-search-confirm-h265-s1",
+        "https://www.kaggle.com/code/huolgggnuyen/codec-search-confirm-h265-s2",
+        "https://www.kaggle.com/code/shungg05/codec-search-confirm-h265-s3"
+      ]
+    }
+  }
+}

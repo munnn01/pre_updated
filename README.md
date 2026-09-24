@@ -8,6 +8,16 @@ Repo này phát triển nhánh OD thành một đường đo độc lập, đồ
 **spatio-temporal importance tube** để cơ chế "giữ vật, giảm nền" dùng được cho cả
 ảnh (`T=1`) và action recognition (`T>1`).
 
+## AR codec-search confirmation (2026-09-24)
+
+Nhánh codec-search đã khóa policy trước khi đánh giá 1.000 clip TEST giống nhau
+cho H.264/H.265. Trên **analyzer mục tiêu `r2plus1d_18`**, BD-rate Top-1 là
+**−24,88% H.264** (bootstrap 95% [−26,82%, −22,94%]) và **−16,09% H.265**
+([−17,44%, −14,74%]). Trên analyzer độc lập `r3d_18`, cải thiện chỉ khoảng
+−1% và CI chứa 0: **không được xem đây là kết quả tổng quát cho mọi mô hình AR**.
+Mã nguồn, policy, bản ghi từng clip và provenance nằm trong
+[`results/codec_search_ar_confirm_1000/`](results/codec_search_ar_confirm_1000/README.md).
+
 ## Những sửa đổi chính của `pre_updated`
 
 - evaluator COCO mAP nằm trực tiếp trong `evaluate.py`; OD không còn rơi nhầm vào
@@ -103,8 +113,9 @@ Cell copy/paste và cấu hình `quick`/`confirmatory`: [`docs/KAGGLE_JOINT_CELL
 ## Ràng buộc (áp cho mọi thí nghiệm ở đây)
 
 - Codec/bitstream/decoder **đóng băng**; chỉ can thiệp ở miền pixel trước encode và sau decode.
-- Mọi số công bố dùng **held-out analyzer + paired bootstrap CI** và luật gap (`≥ −0.05` mọi QP, cả hai codec).
-  Không có số on-teacher.
+- Các kết quả OD/R0 ở phần trên dùng **held-out analyzer + paired bootstrap CI**
+  và luật gap (`≥ −0.05` mọi QP, cả hai codec). Nhánh AR codec-search báo riêng
+  analyzer mục tiêu và analyzer độc lập; số mục tiêu không chứng minh transfer.
 - Ảnh là đơn khung: `T=1`, codec intra-only (`codec.inter: false`).
 - Box của torchvision là **xyxy**, COCO cần **xywh** — luôn đi qua `_coco_box`.
 - Mọi split trong index phải **khác rỗng**: val rỗng sẽ âm thầm tắt model selection và early stopping.

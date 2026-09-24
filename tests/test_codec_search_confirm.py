@@ -1,5 +1,6 @@
 import hashlib
 import json
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import torch
 from ops import codec_search_ar
 from ops.codec_search_confirm import load_frozen
 from ops.merge_codec_search_confirm import load_shards
+from ops.package_codec_search_confirm import FILES_PER_SHARD, write_archive
 from ops.push_codec_search_confirm import render_cell
 from src.models.codec_search import CANDIDATES
 
@@ -96,3 +98,24 @@ def test_merge_requires_unique_videos_and_complete_shards(tmp_path):
     assert len(rows) == 8 and report["test_fingerprint"] == fp
     with pytest.raises(ValueError, match="missing or repeated confirmation shard"):
         load_shards(directories[:3] + directories[:1], expected_count=8)
+
+
+def test_release_archive_is_deterministic_and_allowlisted(tmp_path):
+    directories = []
+    for i in range(4):
+        directory = tmp_path / f"input_{i}"
+        directory.mkdir()
+        directories.append(directory)
+        for name in FILES_PER_SHARD:
+            (directory / name).write_text(f"shard={i} file={name}\n", encoding="utf-8")
+        (directory / "private_token.txt").write_text("do-not-package", encoding="utf-8")
+    first = tmp_path / "first.tar.gz"
+    second = tmp_path / "second.tar.gz"
+    write_archive(first, directories)
+    write_archive(second, directories)
+    assert first.read_bytes() == second.read_bytes()
+    with tarfile.open(first, "r:gz") as archive:
+        names = archive.getnames()
+        assert len(names) == 4 * len(FILES_PER_SHARD)
+        assert names == [f"shard_{i}/{name}" for i in range(4) for name in FILES_PER_SHARD]
+        assert not any("private_token" in name for name in names)
